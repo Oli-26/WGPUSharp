@@ -9,7 +9,78 @@
 <PageTitle>WgpuSharp — Shader Playground</PageTitle>
 
 <h3>Shader Playground</h3>
-<p>Write WGSL fragment shaders with live preview. Drag or click snippets to insert. Built-in uniforms: <code>time</code>, <code>resolution</code>, <code>mouse</code>.</p>
+<p>Write WGSL fragment shaders with live preview. Drag or click snippets to insert.</p>
+
+<details style="margin-bottom: 12px; background: #151520; border: 1px solid #333; border-radius: 6px; padding: 0;">
+    <summary style="padding: 10px 14px; cursor: pointer; color: #aaa; font-weight: bold; user-select: none;">
+        How to Write Shaders — Quick Guide
+    </summary>
+    <div style="padding: 12px 16px; font-size: 0.88em; color: #bbb; line-height: 1.6;">
+        <h5 style="color: #e0e0e0; margin-top: 0;">Basics</h5>
+        <p>You write a <strong>fragment shader</strong> — a function that runs for every pixel and returns a color.
+        You receive <code>uv</code> (pixel position from 0 to 1) and return <code>vec4f(r, g, b, a)</code>.</p>
+<pre style="background: #1e1e2e; padding: 8px; border-radius: 4px; overflow-x: auto; color: #cdd6f4;">@@fragment
+fn fs_main(@@location(0) uv: vec2f) -> @@location(0) vec4f {
+    return vec4f(uv.x, uv.y, 0.5, 1.0);  // red=x, green=y, blue=0.5
+}</pre>
+
+        <h5 style="color: #e0e0e0;">Available Uniforms</h5>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 8px;">
+            <tr style="border-bottom: 1px solid #333;">
+                <td style="padding: 4px 8px;"><code>globals.time</code></td>
+                <td style="padding: 4px 8px;">Elapsed seconds (f32) — use for animation</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #333;">
+                <td style="padding: 4px 8px;"><code>globals.resolution</code></td>
+                <td style="padding: 4px 8px;">Canvas size in pixels (vec2f)</td>
+            </tr>
+            <tr>
+                <td style="padding: 4px 8px;"><code>globals.mouse</code></td>
+                <td style="padding: 4px 8px;">Mouse position 0-1 (vec2f) — move over the canvas</td>
+            </tr>
+        </table>
+
+        <h5 style="color: #e0e0e0;">Key WGSL Types</h5>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li><code>f32</code> — float, <code>vec2f</code> — 2D vector, <code>vec3f</code> — 3D/color, <code>vec4f</code> — color+alpha</li>
+            <li>Construct: <code>vec3f(1.0, 0.0, 0.0)</code> = red, <code>vec3f(0.5)</code> = grey</li>
+            <li>Swizzle: <code>color.rgb</code>, <code>uv.yx</code>, <code>v.xxx</code></li>
+        </ul>
+
+        <h5 style="color: #e0e0e0;">Useful Functions</h5>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li><code>sin(x)</code>, <code>cos(x)</code> — oscillation, waves</li>
+            <li><code>length(p)</code> — distance from origin (circles!)</li>
+            <li><code>fract(x)</code> — fractional part (tiling, patterns)</li>
+            <li><code>smoothstep(edge0, edge1, x)</code> — smooth threshold (anti-aliased shapes)</li>
+            <li><code>mix(a, b, t)</code> — linear interpolation (gradients, blending)</li>
+            <li><code>step(edge, x)</code> — hard threshold (0 or 1)</li>
+            <li><code>clamp(x, lo, hi)</code> — constrain value</li>
+            <li><code>atan2(y, x)</code> — angle (polar coordinates, spirals)</li>
+            <li><code>abs(x)</code>, <code>floor(x)</code>, <code>fract(x)</code> — for patterns and grids</li>
+        </ul>
+
+        <h5 style="color: #e0e0e0;">Common Patterns</h5>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li><strong>Circle:</strong> <code>length(uv - 0.5)</code> gives distance from center. Threshold with <code>smoothstep</code>.</li>
+            <li><strong>Animation:</strong> Add <code>globals.time</code> to angles or positions.</li>
+            <li><strong>Tiling:</strong> <code>fract(uv * N)</code> repeats the UV space N times.</li>
+            <li><strong>Noise:</strong> Use <code>fract(sin(dot(...)) * 43758.5453)</code> as a cheap hash.</li>
+            <li><strong>Colors:</strong> Build from HSV using the hue snippet, or <code>mix()</code> two colors.</li>
+            <li><strong>SDF (Signed Distance Fields):</strong> Describe shapes as distance functions. Combine with <code>min()</code> (union), <code>max()</code> (intersection), <code>-d</code> (invert).</li>
+            <li><strong>Glow:</strong> <code>0.01 / distance</code> creates a glow/light effect.</li>
+        </ul>
+
+        <h5 style="color: #e0e0e0;">Tips</h5>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li>Start simple — get a circle on screen, then animate it, then add color.</li>
+            <li>Use the snippet buttons to insert common patterns at your cursor.</li>
+            <li>WGSL uses <code>let</code> for constants and <code>var</code> for mutable variables.</li>
+            <li>Helper functions go <em>above</em> <code>@@fragment fn fs_main</code>.</li>
+            <li>Save your work with the Save button — shaders persist in your browser.</li>
+        </ul>
+    </div>
+</details>
 
 <div class="snippet-palette" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;">
     @foreach (var snippet in Snippets)
@@ -29,6 +100,19 @@
 
 <div style="display: flex; gap: 12px; height: 520px;">
     <div style="flex: 1; display: flex; flex-direction: column;">
+        <div style="display: flex; gap: 8px; margin-bottom: 6px; align-items: center;">
+            <button class="btn btn-sm btn-primary" @onclick="CompileAndReload" disabled="@(!_gpuReady)">
+                Compile & Reload
+            </button>
+            <label style="font-size: 0.85em; color: #aaa;">
+                <input type="checkbox" @bind="_autoReload" /> Auto-reload on edit
+            </label>
+            @if (_fps > 0)
+            {
+                <span style="font-size: 12px; color: #888; margin-left: auto;">@_fps.ToString("F0") FPS</span>
+            }
+        </div>
+
         <textarea id="shader-editor"
                   @bind="_shaderCode"
                   @bind:event="oninput"
@@ -38,14 +122,15 @@
 
         @if (_compileError is not null)
         {
-            <div style="background: #3b1111; color: #ff6b6b; padding: 8px; margin-top: 4px; font-family: monospace; font-size: 12px; border-radius: 4px; max-height: 80px; overflow: auto;">
+            <div style="background: #3b1111; border: 1px solid #ff4444; color: #ff8888; padding: 10px; margin-top: 6px; font-family: monospace; font-size: 12px; border-radius: 4px; max-height: 120px; overflow: auto; white-space: pre-wrap;">
+                <strong style="color: #ff4444;">Shader Error:</strong>
                 @_compileError
             </div>
         }
         else if (_compiled)
         {
-            <div style="background: #113b11; color: #6bff6b; padding: 4px 8px; margin-top: 4px; font-size: 12px; border-radius: 4px;">
-                Compiled OK
+            <div style="background: #113b11; border: 1px solid #44ff44; color: #88ff88; padding: 6px 10px; margin-top: 6px; font-size: 12px; border-radius: 4px;">
+                Compiled successfully
             </div>
         }
     </div>
@@ -53,28 +138,57 @@
         <canvas id="shader-canvas" width="512" height="512"
                 style="border: 1px solid #555; display: block; border-radius: 4px; cursor: crosshair;"
                 @onmousemove="OnMouseMove"></canvas>
-        @if (_fps > 0)
-        {
-            <div style="font-size: 12px; color: #888; margin-top: 4px;">@_fps.ToString("F0") FPS</div>
-        }
     </div>
 </div>
 
-<div style="margin-top: 10px;">
-    <strong>Templates:</strong>
-    @foreach (var tmpl in Templates)
-    {
-        <button class="btn btn-sm btn-outline-secondary" style="margin-right: 6px;"
-                @onclick="() => LoadTemplate(tmpl)">@tmpl.Name</button>
-    }
+<div style="display: flex; gap: 24px; margin-top: 12px; flex-wrap: wrap; align-items: flex-start;">
+    <div>
+        <strong>Templates:</strong><br/>
+        @foreach (var tmpl in Templates)
+        {
+            <button class="btn btn-sm btn-outline-secondary" style="margin: 2px 4px 2px 0;"
+                    @onclick="() => LoadTemplate(tmpl)">@tmpl.Name</button>
+        }
+    </div>
+    <div style="border-left: 1px solid #444; padding-left: 16px;">
+        <strong>Save / Load:</strong>
+        <div style="display: flex; gap: 6px; margin-top: 4px; align-items: center;">
+            <input type="text" @bind="_saveName" placeholder="Shader name..."
+                   style="background: #1e1e2e; color: #cdd6f4; border: 1px solid #555; padding: 3px 8px; border-radius: 4px; width: 160px; font-size: 0.85em;" />
+            <button class="btn btn-sm btn-primary" @onclick="SaveShader"
+                    disabled="@(string.IsNullOrWhiteSpace(_saveName))">Save</button>
+        </div>
+        @if (_savedShaders.Length > 0)
+        {
+            <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
+                @foreach (var name in _savedShaders)
+                {
+                    <div style="display: inline-flex; align-items: center; background: #1a1a2e; border: 1px solid #444; border-radius: 4px; padding: 2px 2px 2px 8px; font-size: 0.82em;">
+                        <button class="btn btn-sm" style="color: #58a6ff; padding: 0 4px;" @onclick="() => LoadSavedShader(name)"
+                                title="Load '@name'">@name</button>
+                        <button class="btn btn-sm" style="color: #ff6b6b; padding: 0 4px; font-size: 0.9em;" @onclick="() => DeleteShader(name)"
+                                title="Delete '@name'">x</button>
+                    </div>
+                }
+            </div>
+        }
+        @if (_saveMessage is not null)
+        {
+            <div style="font-size: 0.8em; color: #88ff88; margin-top: 4px;">@_saveMessage</div>
+        }
+    </div>
 </div>
 
 @code {
     private string _shaderCode = "";
     private string? _compileError;
     private bool _compiled;
+    private bool _autoReload = true;
     private float _fps;
     private float _mouseX, _mouseY;
+    private string _saveName = "";
+    private string? _saveMessage;
+    private string[] _savedShaders = [];
     private GpuLoop? _loop;
     private GpuDevice? _device;
     private GpuCanvas? _canvas;
@@ -85,7 +199,6 @@
     private bool _needsRecompile;
     private DateTime _lastEditTime;
 
-    // Fixed vertex shader — fullscreen triangle
     private const string VertexShader = @"
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -106,7 +219,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 }
 ";
 
-    // Uniform header prepended to user's fragment shader
     private const string UniformHeader = @"
 struct Globals {
     time: f32,
@@ -131,7 +243,7 @@ struct Globals {
 
             _uniformBuffer = await _device.CreateBufferAsync(new BufferDescriptor
             {
-                Size = 32, // time(4) + pad(4) + resolution(8) + mouse(8) + pad(8)
+                Size = 32,
                 Usage = BufferUsage.Uniform | BufferUsage.CopyDest,
             });
 
@@ -139,49 +251,35 @@ struct Globals {
             await JS.InvokeVoidAsync("ShaderPlayground.initSnippetDrag");
 
             _gpuReady = true;
+            _savedShaders = await JS.InvokeAsync<string[]>("ShaderPlayground.listSavedShaders");
+            StateHasChanged();
 
-            // Load default template
-            LoadTemplate(Templates[0]);
+            // Load default template and compile it immediately
+            _shaderCode = Templates[0].Code;
+            StateHasChanged();
+            await CompileAndReload();
         }
         catch (Exception ex)
         {
-            _compileError = ex.Message;
+            _compileError = $"GPU init failed: {ex.Message}";
             StateHasChanged();
         }
     }
 
     private void OnShaderChanged()
     {
-        _lastEditTime = DateTime.UtcNow;
-        _needsRecompile = true;
+        if (_autoReload)
+        {
+            _lastEditTime = DateTime.UtcNow;
+            _needsRecompile = true;
+        }
     }
 
-    private async Task InsertSnippet(string code)
-    {
-        await JS.InvokeVoidAsync("ShaderPlayground.insertAtCursor", "shader-editor", code);
-        // Re-read the value since JS modified the textarea directly
-        _shaderCode = await JS.InvokeAsync<string>("ShaderPlayground.getValue", "shader-editor");
-        _needsRecompile = true;
-        _lastEditTime = DateTime.UtcNow;
-    }
-
-    private void LoadTemplate(ShaderTemplate tmpl)
-    {
-        _shaderCode = tmpl.Code;
-        _needsRecompile = true;
-        _lastEditTime = DateTime.UtcNow;
-    }
-
-    private void OnMouseMove(Microsoft.AspNetCore.Components.Web.MouseEventArgs e)
-    {
-        _mouseX = (float)e.OffsetX / 512f;
-        _mouseY = 1f - (float)e.OffsetY / 512f;
-    }
-
-    private async Task TryRecompile()
+    private async Task CompileAndReload()
     {
         if (_device is null || _canvas is null || !_gpuReady) return;
 
+        _needsRecompile = false;
         var fullShader = VertexShader + UniformHeader + _shaderCode;
 
         try
@@ -213,53 +311,128 @@ struct Globals {
             _compileError = null;
             _compiled = true;
 
-            // Start loop if not running
+            // Start render loop if not already running
             if (_loop is null)
-            {
-                float totalTime = 0;
-                var uniformBytes = new byte[32];
+                await StartRenderLoop();
 
-                _loop = await Gpu.RunLoopAsync(_device, async (frame) =>
-                {
-                    totalTime += frame.DeltaTime;
-                    _fps = frame.Fps;
-
-                    // Hot reload check — debounce 400ms
-                    if (_needsRecompile && (DateTime.UtcNow - _lastEditTime).TotalMilliseconds > 400)
-                    {
-                        _needsRecompile = false;
-                        await TryRecompile();
-                        StateHasChanged();
-                    }
-
-                    if (_currentPipeline is null || _currentBindGroup is null) return;
-
-                    // Write uniforms: time, pad, resolution, mouse, pad
-                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(0), totalTime);
-                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(8), 512f);
-                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(12), 512f);
-                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(16), _mouseX);
-                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(20), _mouseY);
-
-                    var batch = new RenderBatch(_device);
-                    batch.WriteBuffer(_uniformBuffer!, uniformBytes);
-                    var colorView = batch.GetCurrentTextureView(_canvas);
-                    var pass = batch.BeginRenderPass(colorView, new GpuColor(0, 0, 0, 1));
-                    pass.SetPipeline(_currentPipeline);
-                    pass.SetBindGroup(0, _currentBindGroup);
-                    pass.Draw(3);
-                    pass.EndAndSubmit();
-                    await batch.FlushAsync();
-
-                    if (frame.FrameIndex % 60 == 0) StateHasChanged();
-                });
-            }
+            StateHasChanged();
         }
         catch (Exception ex)
         {
-            _compileError = ex.Message;
+            // Extract the useful part of the error message
+            var msg = ex.Message;
+            // WebGPU shader errors often have the error after "Tint WGSL reader failure:" or similar
+            var idx = msg.IndexOf("error:", StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+                msg = msg[idx..];
+
+            _compileError = msg;
             _compiled = false;
+            StateHasChanged();
         }
+    }
+
+    private async Task StartRenderLoop()
+    {
+        if (_device is null || _canvas is null) return;
+
+        float totalTime = 0;
+        var uniformBytes = new byte[32];
+
+        _loop = await Gpu.RunLoopAsync(_device, async (frame) =>
+        {
+            totalTime += frame.DeltaTime;
+            _fps = frame.Fps;
+
+            // Auto-reload: debounce 500ms after last edit
+            if (_autoReload && _needsRecompile && (DateTime.UtcNow - _lastEditTime).TotalMilliseconds > 500)
+            {
+                await CompileAndReload();
+            }
+
+            if (_currentPipeline is null || _currentBindGroup is null) return;
+
+            // Write uniforms
+            BitConverter.TryWriteBytes(uniformBytes.AsSpan(0), totalTime);
+            BitConverter.TryWriteBytes(uniformBytes.AsSpan(8), 512f);
+            BitConverter.TryWriteBytes(uniformBytes.AsSpan(12), 512f);
+            BitConverter.TryWriteBytes(uniformBytes.AsSpan(16), _mouseX);
+            BitConverter.TryWriteBytes(uniformBytes.AsSpan(20), _mouseY);
+
+            var batch = new RenderBatch(_device);
+            batch.WriteBuffer(_uniformBuffer!, uniformBytes);
+            var colorView = batch.GetCurrentTextureView(_canvas);
+            var pass = batch.BeginRenderPass(colorView, new GpuColor(0, 0, 0, 1));
+            pass.SetPipeline(_currentPipeline);
+            pass.SetBindGroup(0, _currentBindGroup);
+            pass.Draw(3);
+            pass.EndAndSubmit();
+            await batch.FlushAsync();
+
+            if (frame.FrameIndex % 60 == 0) StateHasChanged();
+        });
+    }
+
+    private async Task InsertSnippet(string code)
+    {
+        await JS.InvokeVoidAsync("ShaderPlayground.insertAtCursor", "shader-editor", code);
+        _shaderCode = await JS.InvokeAsync<string>("ShaderPlayground.getValue", "shader-editor");
+        if (_autoReload)
+        {
+            _needsRecompile = true;
+            _lastEditTime = DateTime.UtcNow;
+        }
+    }
+
+    private async Task LoadTemplate(ShaderTemplate tmpl)
+    {
+        _shaderCode = tmpl.Code;
+        StateHasChanged();
+        await CompileAndReload();
+    }
+
+    private void OnMouseMove(Microsoft.AspNetCore.Components.Web.MouseEventArgs e)
+    {
+        _mouseX = (float)e.OffsetX / 512f;
+        _mouseY = 1f - (float)e.OffsetY / 512f;
+    }
+
+    private async Task SaveShader()
+    {
+        if (string.IsNullOrWhiteSpace(_saveName)) return;
+        await JS.InvokeVoidAsync("ShaderPlayground.saveShader", _saveName.Trim(), _shaderCode);
+        _savedShaders = await JS.InvokeAsync<string[]>("ShaderPlayground.listSavedShaders");
+        _saveMessage = $"Saved '{_saveName.Trim()}'";
+        _saveName = "";
+        StateHasChanged();
+        _ = ClearSaveMessage();
+    }
+
+    private async Task LoadSavedShader(string name)
+    {
+        var code = await JS.InvokeAsync<string?>("ShaderPlayground.loadShader", name);
+        if (code is not null)
+        {
+            _shaderCode = code;
+            StateHasChanged();
+            await CompileAndReload();
+        }
+    }
+
+    private async Task DeleteShader(string name)
+    {
+        await JS.InvokeVoidAsync("ShaderPlayground.deleteShader", name);
+        _savedShaders = await JS.InvokeAsync<string[]>("ShaderPlayground.listSavedShaders");
+        _saveMessage = $"Deleted '{name}'";
+        StateHasChanged();
+        _ = ClearSaveMessage();
+    }
+
+    private async Task ClearSaveMessage()
+    {
+        await Task.Delay(2000);
+        _saveMessage = null;
+        StateHasChanged();
     }
 
     public async ValueTask DisposeAsync()
@@ -270,52 +443,77 @@ struct Globals {
         if (_uniformBuffer is not null) await _uniformBuffer.DisposeAsync();
     }
 
-    // ---- Snippet definitions ----
+    // ---- Snippets ----
     private static readonly SnippetDef[] Snippets =
     [
-        new("UV Gradient", "Color from UV coordinates",
+        // Basics
+        new("UV Color", "Color from UV coordinates",
             "    let color = vec3f(uv, 0.5);\n"),
-        new("Time Pulse", "Sine wave pulsing with time",
-            "    let pulse = sin(globals.time * 3.0) * 0.5 + 0.5;\n"),
-        new("Circle", "Signed distance circle",
-            "    let d = length(uv - vec2f(0.5)) - 0.3;\n    let circle = 1.0 - smoothstep(0.0, 0.01, d);\n"),
+        new("Time", "Animated sine wave",
+            "    let t = sin(globals.time * 3.0) * 0.5 + 0.5;\n"),
+        new("Mouse", "Distance to mouse cursor",
+            "    let glow = 0.05 / length(uv - globals.mouse);\n"),
+        // Shapes
+        new("Circle", "SDF circle",
+            "    let d = length(uv - 0.5) - 0.3;\n    let circle = 1.0 - smoothstep(0.0, 0.005, d);\n"),
+        new("Box", "SDF box",
+            "    let b = abs(uv - 0.5) - vec2f(0.2);\n    let box = 1.0 - smoothstep(0.0, 0.005, length(max(b, vec2f(0.0))));\n"),
+        new("Ring", "SDF ring",
+            "    let ring = 1.0 - smoothstep(0.0, 0.005, abs(length(uv - 0.5) - 0.3) - 0.02);\n"),
+        new("Star", "5-pointed star shape",
+            "    let p = uv - 0.5;\n    let a = atan2(p.y, p.x);\n    let r = length(p);\n    let star = 0.15 + 0.1 * cos(a * 5.0 + globals.time);\n    let s = 1.0 - smoothstep(star - 0.01, star, r);\n"),
+        // Patterns
         new("Stripes", "Animated diagonal stripes",
             "    let stripes = sin((uv.x + uv.y) * 20.0 + globals.time * 2.0) * 0.5 + 0.5;\n"),
-        new("Mouse Glow", "Glow following mouse position",
-            "    let glow = 0.05 / length(uv - globals.mouse);\n"),
-        new("Noise (Hash)", "Simple hash-based noise",
-            "    let n = fract(sin(dot(floor(uv * 10.0), vec2f(12.9898, 78.233))) * 43758.5453);\n"),
-        new("Checkerboard", "Tiled checkerboard pattern",
+        new("Checker", "Checkerboard pattern",
             "    let check = step(0.5, fract(floor(uv.x * 8.0) + floor(uv.y * 8.0)) * 0.5);\n"),
-        new("Rotate UV", "Rotate UVs around center",
-            "    let angle = globals.time;\n    let c = cos(angle); let s = sin(angle);\n    let ruv = mat2x2f(c, -s, s, c) * (uv - 0.5) + 0.5;\n"),
-        new("Color Mix", "Mix two colors",
+        new("Grid", "Thin grid lines",
+            "    let grid = step(0.95, max(fract(uv.x * 10.0), fract(uv.y * 10.0)));\n"),
+        new("Dots", "Polka dot pattern",
+            "    let dots = 1.0 - smoothstep(0.1, 0.12, length(fract(uv * 6.0) - 0.5));\n"),
+        new("Hex", "Hexagonal tiling",
+            "    let h = uv * 6.0;\n    let hx = h - vec2f(floor(h.x), floor(h.y + 0.5) - 0.5 * step(1.0, fract(h.x) + fract(h.y)));\n"),
+        // Math / UV
+        new("Rotate", "Rotate UVs around center",
+            "    let a = globals.time;\n    let co = cos(a); let si = sin(a);\n    let ruv = mat2x2f(co, -si, si, co) * (uv - 0.5) + 0.5;\n"),
+        new("Tile", "Repeat/tile UVs",
+            "    let tiled = fract(uv * 4.0);\n"),
+        new("Polar", "Cartesian to polar coordinates",
+            "    let p = uv - 0.5;\n    let angle = atan2(p.y, p.x);\n    let radius = length(p);\n"),
+        new("Remap", "Remap value range",
+            "    // remap x from [a,b] to [c,d]\n    // let y = c + (x - a) * (d - c) / (b - a);\n"),
+        // Noise / Randomness
+        new("Hash", "Hash-based noise",
+            "    let n = fract(sin(dot(floor(uv * 10.0), vec2f(12.9898, 78.233))) * 43758.5453);\n"),
+        new("Smooth Noise", "Interpolated value noise",
+            "    let i = floor(uv * 8.0);\n    let f = fract(uv * 8.0);\n    let t = f * f * (3.0 - 2.0 * f); // smoothstep\n"),
+        // Color
+        new("Mix Colors", "Blend two colors",
             "    let col = mix(vec3f(0.1, 0.3, 0.8), vec3f(0.9, 0.2, 0.1), uv.x);\n"),
-        new("Radial Wave", "Expanding rings from center",
-            "    let wave = sin(length(uv - 0.5) * 30.0 - globals.time * 5.0) * 0.5 + 0.5;\n"),
-        new("Vignette", "Dark edges vignette effect",
+        new("HSV", "Hue to RGB conversion",
+            "    let hue = globals.time * 0.2 + uv.x;\n    let rgb = clamp(abs(fract(hue + vec3f(0.0, 0.333, 0.667)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));\n"),
+        new("Vignette", "Dark edges effect",
             "    let vig = 1.0 - length(uv - 0.5) * 1.2;\n"),
+        new("Posterize", "Reduce color levels",
+            "    let levels = 4.0;\n    // use: floor(color * levels) / levels\n"),
+        // Effects
         new("Pixelate", "Pixelation effect",
-            "    let pixelSize = 32.0;\n    let puv = floor(uv * pixelSize) / pixelSize;\n"),
+            "    let px = 32.0;\n    let puv = floor(uv * px) / px;\n"),
+        new("Wave Distort", "Wavy UV distortion",
+            "    let wuv = uv + vec2f(sin(uv.y * 10.0 + globals.time) * 0.03, cos(uv.x * 10.0 + globals.time) * 0.03);\n"),
+        new("Radial Blur", "Zoom blur from center",
+            "    let dir = normalize(uv - 0.5) * 0.01;\n    // sample multiple offsets along dir and average\n"),
+        new("Scanlines", "CRT scanline effect",
+            "    let scan = sin(uv.y * globals.resolution.y * 3.14159) * 0.1 + 0.9;\n"),
     ];
 
+    // ---- Templates ----
     private static readonly ShaderTemplate[] Templates =
     [
         new("Gradient", @"
 @fragment
 fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
     let color = vec3f(uv, sin(globals.time) * 0.5 + 0.5);
-    return vec4f(color, 1.0);
-}
-"),
-        new("Circles", @"
-@fragment
-fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
-    let p = uv - 0.5;
-    let d = length(p);
-    let rings = sin(d * 40.0 - globals.time * 4.0) * 0.5 + 0.5;
-    let glow = 0.02 / d;
-    let color = vec3f(rings * 0.3, rings * 0.6, rings) + glow * 0.1;
     return vec4f(color, 1.0);
 }
 "),
@@ -334,6 +532,118 @@ fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
     return vec4f(r, g, b, 1.0);
 }
 "),
+        new("Tunnel", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let p = uv - 0.5;
+    let angle = atan2(p.y, p.x);
+    let radius = length(p);
+
+    let tunnel_u = angle / 3.14159;
+    let tunnel_v = 0.5 / radius + globals.time * 0.5;
+
+    let pattern = sin(tunnel_u * 8.0) * sin(tunnel_v * 8.0);
+    let c = pattern * 0.5 + 0.5;
+
+    let fog = smoothstep(0.0, 0.5, radius);
+    let color = vec3f(c * 0.3, c * 0.5 * fog, c * fog);
+    return vec4f(color, 1.0);
+}
+"),
+        new("Fractal", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    var z = (uv - 0.5) * 3.0;
+    let c = vec2f(-0.745 + sin(globals.time * 0.1) * 0.05,
+                   0.186 + cos(globals.time * 0.13) * 0.05);
+    var i = 0u;
+    for (; i < 100u; i++) {
+        z = vec2f(z.x * z.x - z.y * z.y + c.x, 2.0 * z.x * z.y + c.y);
+        if (dot(z, z) > 4.0) { break; }
+    }
+    let t = f32(i) / 100.0;
+    let r = sin(t * 6.28 + 0.0) * 0.5 + 0.5;
+    let g = sin(t * 6.28 + 2.1) * 0.5 + 0.5;
+    let b = sin(t * 6.28 + 4.2) * 0.5 + 0.5;
+    return vec4f(r, g, b, 1.0);
+}
+"),
+        new("Fire", @"
+fn hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+}
+
+fn noise(p: vec2f) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2f(1.0, 0.0)), u.x),
+               mix(hash(i + vec2f(0.0, 1.0)), hash(i + vec2f(1.0, 1.0)), u.x), u.y);
+}
+
+fn fbm(p: vec2f) -> f32 {
+    var v = 0.0;
+    var a = 0.5;
+    var pos = p;
+    for (var i = 0; i < 5; i++) {
+        v += a * noise(pos);
+        pos *= 2.0;
+        a *= 0.5;
+    }
+    return v;
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    var p = uv;
+    p.y = 1.0 - p.y;
+    let t = globals.time * 1.5;
+
+    let n = fbm(p * vec2f(4.0, 8.0) + vec2f(0.0, -t * 2.0));
+    let fire = n * (1.0 - p.y);
+    let intensity = smoothstep(0.1, 0.9, fire);
+
+    let r = smoothstep(0.0, 0.6, intensity);
+    let g = smoothstep(0.2, 1.0, intensity) * 0.7;
+    let b = smoothstep(0.8, 1.0, intensity) * 0.3;
+    return vec4f(r, g, b, 1.0);
+}
+"),
+        new("Voronoi", @"
+fn hash2(p: vec2f) -> vec2f {
+    return fract(sin(vec2f(dot(p, vec2f(127.1, 311.7)),
+                           dot(p, vec2f(269.5, 183.3)))) * 43758.5453);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let scale = 5.0;
+    let p = uv * scale;
+    let ip = floor(p);
+    let fp = fract(p);
+
+    var minDist = 1.0;
+    var cellColor = vec2f(0.0);
+
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let neighbor = vec2f(f32(x), f32(y));
+            let point = hash2(ip + neighbor);
+            let animated = 0.5 + 0.5 * sin(globals.time + point * 6.28);
+            let d = length(neighbor + animated - fp);
+            if (d < minDist) {
+                minDist = d;
+                cellColor = point;
+            }
+        }
+    }
+
+    let edge = smoothstep(0.0, 0.05, minDist);
+    let hue = cellColor.x;
+    let rgb = clamp(abs(fract(hue + vec3f(0.0, 0.333, 0.667)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
+    return vec4f(rgb * edge * 0.8, 1.0);
+}
+"),
         new("Mouse Light", @"
 @fragment
 fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
@@ -341,6 +651,35 @@ fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
     let light = 0.03 / (d * d + 0.01);
     let color = vec3f(light * 0.3, light * 0.5, light);
     return vec4f(color, 1.0);
+}
+"),
+        new("Matrix Rain", @"
+fn char_hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43758.5453);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let cols = 40.0;
+    let cell = floor(uv * vec2f(cols, cols * 2.0));
+    let cell_uv = fract(uv * vec2f(cols, cols * 2.0));
+
+    let speed = 2.0 + char_hash(vec2f(cell.x, 0.0)) * 4.0;
+    let offset = char_hash(vec2f(cell.x, 1.0)) * 100.0;
+    let drop = fract((globals.time * speed + offset) / 40.0) * 40.0;
+
+    let dist = cell.y - drop;
+    let fade = smoothstep(15.0, 0.0, dist) * step(0.0, dist);
+
+    let flicker = step(0.5, char_hash(cell + floor(globals.time * 8.0)));
+    let brightness = fade * (0.5 + flicker * 0.5);
+
+    let head = smoothstep(1.0, 0.0, dist) * 0.5;
+    let g = brightness * 0.9 + head;
+    let r = head * 0.3;
+    let b = brightness * 0.1;
+
+    return vec4f(r, g, b, 1.0);
 }
 "),
         new("SDF Shapes", @"
@@ -358,11 +697,672 @@ fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
 
     let box = sdBox(rp, vec2f(0.2, 0.15));
     let circle = length(p) - 0.25;
-    let shape = max(box, -circle); // intersection
+    let shape = max(box, -circle);
 
     let edge = 1.0 - smoothstep(0.0, 0.005, abs(shape));
     let fill = 1.0 - smoothstep(0.0, 0.005, shape);
     let color = vec3f(fill * 0.2, fill * 0.4, fill * 0.8) + edge * 0.5;
+    return vec4f(color, 1.0);
+}
+"),
+        new("Kaleidoscope", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    var p = uv - 0.5;
+    let angle = atan2(p.y, p.x);
+    let radius = length(p);
+
+    // Mirror into 6 segments
+    let segments = 6.0;
+    let a = abs(((angle / 3.14159 * 0.5 + 0.5) * segments) % 2.0 - 1.0);
+    let mirrored = vec2f(cos(a * 3.14159 / segments), sin(a * 3.14159 / segments)) * radius;
+
+    let t = globals.time * 0.3;
+    let pattern = sin(mirrored.x * 15.0 + t) * sin(mirrored.y * 15.0 - t);
+    let pattern2 = cos(length(mirrored) * 20.0 - t * 3.0);
+
+    let r = sin(pattern + t) * 0.5 + 0.5;
+    let g = sin(pattern2 + t * 1.3) * 0.5 + 0.5;
+    let b = sin(pattern + pattern2) * 0.5 + 0.5;
+
+    let vig = 1.0 - radius * 1.5;
+    return vec4f(vec3f(r, g, b) * vig, 1.0);
+}
+"),
+        new("Waves", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    var color = vec3f(0.0);
+
+    for (var i = 0; i < 5; i++) {
+        let fi = f32(i);
+        let wave_y = 0.5 + sin(uv.x * (5.0 + fi * 2.0) + t * (1.0 + fi * 0.3) + fi) * 0.08;
+        let d = abs(uv.y - wave_y);
+        let glow = 0.003 / (d + 0.001);
+
+        let hue = fi * 0.2 + t * 0.1;
+        let wave_color = clamp(abs(fract(hue + vec3f(0.0, 0.333, 0.667)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
+        color += wave_color * glow;
+    }
+
+    return vec4f(color, 1.0);
+}
+"),
+        new("Aurora", @"
+fn hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+}
+
+fn noise(p: vec2f) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2f(1.0, 0.0)), u.x),
+               mix(hash(i + vec2f(0.0, 1.0)), hash(i + vec2f(1.0, 1.0)), u.x), u.y);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time * 0.3;
+    var aurora = 0.0;
+    for (var i = 0; i < 4; i++) {
+        let fi = f32(i);
+        let y = 0.4 + fi * 0.08;
+        let wave = noise(vec2f(uv.x * 3.0 + t + fi, fi * 10.0)) * 0.15;
+        let band = smoothstep(0.08, 0.0, abs(uv.y - y - wave));
+        aurora += band * (1.0 - fi * 0.2);
+    }
+
+    let green = vec3f(0.1, 0.9, 0.3);
+    let purple = vec3f(0.5, 0.1, 0.8);
+    let col = mix(green, purple, uv.y * 1.5) * aurora;
+
+    // Starfield
+    let star = step(0.998, hash(floor(uv * 200.0)));
+    let twinkle = sin(globals.time * 3.0 + hash(floor(uv * 200.0)) * 100.0) * 0.5 + 0.5;
+
+    let sky = vec3f(0.01, 0.01, 0.03);
+    return vec4f(sky + col + star * twinkle * 0.5, 1.0);
+}
+"),
+        new("Ocean", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    var p = uv;
+
+    // Water surface
+    var wave = 0.0;
+    wave += sin(p.x * 6.0 + t * 1.2) * 0.02;
+    wave += sin(p.x * 13.0 - t * 0.8 + 1.0) * 0.01;
+    wave += sin(p.x * 26.0 + t * 2.1 + 2.0) * 0.005;
+
+    let horizon = 0.45 + wave;
+    let is_water = step(horizon, p.y);
+
+    // Sky
+    let sky_grad = smoothstep(0.0, 0.45, p.y);
+    let sky = mix(vec3f(0.9, 0.5, 0.3), vec3f(0.1, 0.2, 0.5), sky_grad);
+
+    // Sun
+    let sun_pos = vec2f(0.5, 0.25);
+    let sun_d = length(p - sun_pos);
+    let sun = 0.02 / (sun_d + 0.01);
+    let sun_color = vec3f(1.0, 0.8, 0.3) * sun * 0.3;
+
+    // Water
+    let depth = (p.y - horizon) * 4.0;
+    let water_base = mix(vec3f(0.0, 0.3, 0.5), vec3f(0.0, 0.05, 0.15), depth);
+    let foam = smoothstep(0.01, 0.0, abs(p.y - horizon)) * 0.5;
+
+    // Reflection
+    let ref_wave = sin(p.x * 20.0 + t * 3.0) * 0.003;
+    let reflection = 0.01 / (abs(p.x - 0.5 + ref_wave) + 0.005) * smoothstep(0.5, 0.45, p.y) * 0.05;
+    let ref_color = vec3f(1.0, 0.6, 0.2) * reflection;
+
+    var color = mix(sky + sun_color, water_base + foam + ref_color, is_water);
+    return vec4f(color, 1.0);
+}
+"),
+        new("Metaballs", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    var field = 0.0;
+    var weighted_color = vec3f(0.0);
+
+    let colors = array<vec3f, 5>(
+        vec3f(1.0, 0.2, 0.3),
+        vec3f(0.2, 0.8, 1.0),
+        vec3f(0.3, 1.0, 0.4),
+        vec3f(1.0, 0.8, 0.1),
+        vec3f(0.8, 0.3, 1.0),
+    );
+
+    for (var i = 0; i < 5; i++) {
+        let fi = f32(i);
+        let center = vec2f(
+            0.5 + sin(t * (0.5 + fi * 0.3) + fi * 2.0) * 0.3,
+            0.5 + cos(t * (0.4 + fi * 0.2) + fi * 3.0) * 0.3,
+        );
+        let d = length(uv - center);
+        let contribution = 0.015 / (d * d + 0.001);
+        field += contribution;
+        weighted_color += colors[i] * contribution;
+    }
+
+    weighted_color /= field;
+    let edge = smoothstep(8.0, 12.0, field);
+    let glow = smoothstep(4.0, 8.0, field) * 0.3;
+
+    let color = weighted_color * edge + weighted_color * glow * 0.5;
+    return vec4f(color, 1.0);
+}
+"),
+        new("Starfield", @"
+fn hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43758.5453);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    var color = vec3f(0.0);
+
+    for (var layer = 0; layer < 4; layer++) {
+        let fl = f32(layer);
+        let speed = 0.1 + fl * 0.15;
+        let scale = 20.0 + fl * 30.0;
+        let brightness = 0.3 + fl * 0.2;
+
+        var p = uv * scale;
+        p.y += t * speed * scale;
+
+        let cell = floor(p);
+        let f = fract(p);
+        let rand = hash(cell);
+
+        if (rand > 0.92) {
+            let star_pos = vec2f(hash(cell + 0.1), hash(cell + 0.2));
+            let d = length(f - star_pos);
+            let twinkle = sin(t * (2.0 + rand * 5.0) + rand * 100.0) * 0.3 + 0.7;
+            let star = smoothstep(0.05, 0.0, d) * brightness * twinkle;
+
+            let temp = hash(cell + 0.5);
+            let star_color = mix(vec3f(0.6, 0.8, 1.0), vec3f(1.0, 0.9, 0.7), temp);
+            color += star_color * star;
+        }
+    }
+
+    // Subtle nebula
+    let nebula = sin(uv.x * 3.0 + t * 0.1) * sin(uv.y * 2.0 - t * 0.05) * 0.02;
+    color += vec3f(0.1, 0.0, 0.15) * (nebula + 0.03);
+
+    return vec4f(color, 1.0);
+}
+"),
+        new("Terrain", @"
+fn hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+}
+
+fn noise(p: vec2f) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2f(1.0, 0.0)), u.x),
+               mix(hash(i + vec2f(0.0, 1.0)), hash(i + vec2f(1.0, 1.0)), u.x), u.y);
+}
+
+fn fbm(p: vec2f) -> f32 {
+    var v = 0.0; var a = 0.5; var pos = p;
+    for (var i = 0; i < 6; i++) { v += a * noise(pos); pos *= 2.0; a *= 0.5; }
+    return v;
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let scroll = vec2f(globals.time * 0.05, globals.time * 0.02);
+    let height = fbm((uv + scroll) * 4.0);
+
+    // Terrain coloring by elevation
+    let water = vec3f(0.1, 0.2, 0.5);
+    let sand = vec3f(0.8, 0.7, 0.5);
+    let grass = vec3f(0.2, 0.5, 0.1);
+    let rock = vec3f(0.4, 0.35, 0.3);
+    let snow = vec3f(0.9, 0.95, 1.0);
+
+    var color: vec3f;
+    if (height < 0.35) { color = mix(water, sand, smoothstep(0.3, 0.35, height)); }
+    else if (height < 0.5) { color = mix(sand, grass, smoothstep(0.35, 0.5, height)); }
+    else if (height < 0.7) { color = mix(grass, rock, smoothstep(0.5, 0.7, height)); }
+    else { color = mix(rock, snow, smoothstep(0.7, 0.85, height)); }
+
+    // Simple lighting
+    let dx = fbm((uv + scroll + vec2f(0.01, 0.0)) * 4.0) - height;
+    let dy = fbm((uv + scroll + vec2f(0.0, 0.01)) * 4.0) - height;
+    let light = 0.5 + (dx - dy) * 8.0;
+
+    return vec4f(color * light, 1.0);
+}
+"),
+        new("Neon Grid", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+
+    // Perspective floor
+    var p = uv - vec2f(0.5, 1.0);
+    p.y = max(p.y, -0.01);
+    let z = 0.1 / p.y;
+    let x = p.x * z * 2.0;
+
+    // Grid
+    let grid_x = abs(fract(x + t * 0.5) - 0.5);
+    let grid_z = abs(fract(z * 0.5 + t * 2.0) - 0.5);
+    let line_x = smoothstep(0.02, 0.0, grid_x) * 0.8;
+    let line_z = smoothstep(0.02, 0.0, grid_z) * 0.8;
+    let grid = max(line_x, line_z);
+
+    // Fog
+    let fog = exp(-z * 0.15);
+    let grid_color = vec3f(0.0, grid * fog, grid * fog * 1.5);
+
+    // Sky gradient
+    let sky_t = smoothstep(-0.3, 0.2, uv.y - 0.5);
+    let sky = mix(vec3f(0.05, 0.0, 0.15), vec3f(0.0), sky_t);
+
+    // Sun
+    let sun_uv = uv - vec2f(0.5, 0.42);
+    let sun_d = length(sun_uv);
+    let sun = smoothstep(0.12, 0.11, sun_d);
+    let sun_stripes = step(0.0, sin(sun_uv.y * 40.0)) * sun;
+    let sun_color = mix(vec3f(1.0, 0.2, 0.5), vec3f(1.0, 0.8, 0.0), (sun_uv.y + 0.12) * 4.0) * sun_stripes;
+    let sun_glow = vec3f(0.5, 0.0, 0.3) * (0.02 / (sun_d + 0.02));
+
+    let is_ground = step(0.5, uv.y);
+    let color = mix(sky + sun_color + sun_glow, grid_color, is_ground);
+    return vec4f(color, 1.0);
+}
+"),
+        new("Lava Lamp", @"
+fn hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+}
+
+fn noise(p: vec2f) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2f(1.0, 0.0)), u.x),
+               mix(hash(i + vec2f(0.0, 1.0)), hash(i + vec2f(1.0, 1.0)), u.x), u.y);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time * 0.4;
+    var p = (uv - 0.5) * 2.5;
+
+    // Distort space with noise
+    p.x += noise(p + t) * 0.5;
+    p.y += noise(p + vec2f(5.0, 0.0) - t * 0.7) * 0.5;
+
+    // Multiple blobs
+    var field = 0.0;
+    for (var i = 0; i < 6; i++) {
+        let fi = f32(i);
+        let center = vec2f(
+            sin(t + fi * 1.5) * 0.8,
+            cos(t * 0.7 + fi * 2.1) * 1.2 + sin(t * 0.3 + fi) * 0.3
+        );
+        let d = length(p - center);
+        field += 0.3 / (d + 0.1);
+    }
+
+    let blob = smoothstep(1.5, 2.5, field);
+    let edge = smoothstep(1.3, 1.5, field) * (1.0 - blob) * 2.0;
+
+    let warm = vec3f(0.9, 0.2, 0.05);
+    let hot = vec3f(1.0, 0.6, 0.0);
+    let bg = vec3f(0.15, 0.02, 0.05);
+
+    let color = bg + warm * blob + hot * edge;
+    return vec4f(color, 1.0);
+}
+"),
+        new("Mandelbrot", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    // Zoom into an interesting region
+    let zoom = 1.0 + globals.time * 0.3;
+    let target = vec2f(-0.7435, 0.1314);
+    let scale = 2.0 / pow(1.5, zoom);
+    let c = target + (uv - 0.5) * scale;
+
+    var z = vec2f(0.0);
+    var i = 0u;
+    for (; i < 200u; i++) {
+        z = vec2f(z.x * z.x - z.y * z.y + c.x, 2.0 * z.x * z.y + c.y);
+        if (dot(z, z) > 256.0) { break; }
+    }
+
+    if (i >= 200u) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+
+    // Smooth coloring
+    let sl = f32(i) - log2(log2(dot(z, z))) + 4.0;
+    let t = sl * 0.02;
+    let r = 0.5 + 0.5 * cos(6.28 * (t + 0.0));
+    let g = 0.5 + 0.5 * cos(6.28 * (t + 0.33));
+    let b = 0.5 + 0.5 * cos(6.28 * (t + 0.67));
+    return vec4f(r, g, b, 1.0);
+}
+"),
+        new("Wormhole", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    var p = (uv - 0.5) * 2.0;
+    let r = length(p);
+    let a = atan2(p.y, p.x);
+
+    // Twist space
+    let twist = a + sin(r * 5.0 - t * 2.0) * 0.5 + t * 0.3;
+    let warp_r = r + sin(a * 3.0 + t) * 0.1;
+
+    // Spiral pattern
+    let spiral = sin(twist * 8.0 + log(warp_r + 0.01) * 10.0 - t * 3.0) * 0.5 + 0.5;
+    let rings = sin(warp_r * 20.0 - t * 4.0) * 0.5 + 0.5;
+
+    // Event horizon
+    let hole = smoothstep(0.15, 0.05, r);
+    let glow = 0.02 / (r + 0.01);
+
+    let c1 = vec3f(0.1, 0.3, 0.9) * spiral;
+    let c2 = vec3f(0.9, 0.1, 0.5) * rings * 0.5;
+    let color = (c1 + c2) * (1.0 - hole) + vec3f(0.8, 0.5, 1.0) * glow * 0.3;
+
+    // Accretion disk
+    let disk = smoothstep(0.02, 0.0, abs(r - 0.2 - sin(a * 2.0 + t) * 0.03));
+    let disk_color = mix(vec3f(1.0, 0.5, 0.0), vec3f(1.0, 1.0, 0.8), disk);
+
+    return vec4f(color + disk_color * disk * 2.0, 1.0);
+}
+"),
+        new("Glitch", @"
+fn hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43758.5453);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    var p = uv;
+
+    // Random horizontal offset bands
+    let block_y = floor(p.y * 20.0 + floor(t * 4.0) * 0.5);
+    let glitch_strength = step(0.8, hash(vec2f(block_y, floor(t * 8.0))));
+    let offset = (hash(vec2f(block_y, floor(t * 12.0))) - 0.5) * 0.2 * glitch_strength;
+    p.x += offset;
+
+    // RGB split
+    let split = glitch_strength * 0.03;
+    let r = smoothstep(0.5, 0.48, length(fract(vec2f(p.x - split, p.y) * 8.0) - 0.5));
+    let g = smoothstep(0.5, 0.48, length(fract(vec2f(p.x, p.y) * 8.0) - 0.5));
+    let b = smoothstep(0.5, 0.48, length(fract(vec2f(p.x + split, p.y) * 8.0) - 0.5));
+
+    // Scanlines
+    let scan = sin(p.y * 400.0) * 0.04 + 0.96;
+
+    // Base pattern (something to glitch)
+    let pattern = sin(p.x * 10.0 + t) * sin(p.y * 10.0 + t * 0.7) * 0.5 + 0.5;
+    var color = vec3f(r + pattern * 0.3, g + pattern * 0.5, b + pattern * 0.8);
+
+    // White noise flash
+    let noise_flash = step(0.95, hash(vec2f(floor(t * 15.0)))) * hash(floor(p * 100.0)) * 0.3;
+    color += noise_flash;
+
+    return vec4f(color * scan, 1.0);
+}
+"),
+        new("Cells", @"
+fn hash2(p: vec2f) -> vec2f {
+    return fract(sin(vec2f(dot(p, vec2f(127.1, 311.7)),
+                           dot(p, vec2f(269.5, 183.3)))) * 43758.5453);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time * 0.5;
+    let scale = 6.0;
+    let p = uv * scale;
+    let ip = floor(p);
+    let fp = fract(p);
+
+    var d1 = 1.0;
+    var d2 = 1.0;
+
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let neighbor = vec2f(f32(x), f32(y));
+            let pt = hash2(ip + neighbor);
+            let animated = 0.5 + 0.5 * sin(t * 1.5 + pt * 6.28);
+            let diff = neighbor + animated - fp;
+            let d = dot(diff, diff);
+            if (d < d1) { d2 = d1; d1 = d; }
+            else if (d < d2) { d2 = d; }
+        }
+    }
+
+    let edge = d2 - d1;
+    let cell_wall = smoothstep(0.0, 0.08, edge);
+
+    // Organic coloring
+    let nucleus = smoothstep(0.08, 0.02, d1);
+    let cytoplasm = smoothstep(0.5, 0.1, d1);
+
+    let wall_color = vec3f(0.1, 0.6, 0.3);
+    let cell_color = vec3f(0.05, 0.2, 0.1) + nucleus * vec3f(0.3, 0.1, 0.0);
+    let membrane = (1.0 - cell_wall) * vec3f(0.0, 0.8, 0.4);
+
+    let color = cell_color * cytoplasm + membrane;
+    return vec4f(color, 1.0);
+}
+"),
+        new("Spiral Galaxy", @"
+fn hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43758.5453);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time * 0.15;
+    let p = (uv - 0.5) * 2.5;
+    let r = length(p);
+    let a = atan2(p.y, p.x);
+
+    // Logarithmic spiral arms
+    var arms = 0.0;
+    for (var i = 0; i < 3; i++) {
+        let arm_offset = f32(i) * 6.28 / 3.0;
+        let spiral = a - log(r + 0.01) * 2.5 + arm_offset + t;
+        let arm = exp(-pow(sin(spiral) * r * 3.0, 2.0)) * exp(-r * 1.5);
+        arms += arm;
+    }
+
+    // Core glow
+    let core = 0.03 / (r * r + 0.01);
+
+    // Stars
+    let star_field = hash(floor(uv * 300.0));
+    let star = step(0.997, star_field) * (sin(t * 20.0 + star_field * 100.0) * 0.3 + 0.7);
+
+    // Dust lanes (dark regions)
+    let dust = smoothstep(0.3, 0.6, arms) * 0.3;
+
+    let arm_color = mix(vec3f(0.3, 0.4, 1.0), vec3f(1.0, 0.6, 0.8), r * 0.8);
+    let core_color = vec3f(1.0, 0.95, 0.8);
+
+    var color = arm_color * arms * 0.8 + core_color * core * 0.15 + star * 0.4;
+    color *= (1.0 - dust);
+    return vec4f(color, 1.0);
+}
+"),
+        new("Psychedelic", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    var p = (uv - 0.5) * 4.0;
+
+    // Domain warping
+    var q = p;
+    for (var i = 0; i < 4; i++) {
+        q = vec2f(
+            sin(q.x * 1.3 + t * 0.7 + q.y) + cos(q.y * 0.9 - t * 0.5),
+            cos(q.x * 1.1 - t * 0.3) + sin(q.y * 1.4 + t * 0.6)
+        );
+    }
+
+    let v = length(q) * 0.3;
+
+    let r = sin(v + t) * 0.5 + 0.5;
+    let g = sin(v * 1.3 + t * 1.1 + 2.0) * 0.5 + 0.5;
+    let b = sin(v * 0.7 + t * 0.9 + 4.0) * 0.5 + 0.5;
+
+    // Pulsing brightness
+    let pulse = sin(length(p) - t * 2.0) * 0.2 + 0.8;
+
+    return vec4f(vec3f(r, g, b) * pulse, 1.0);
+}
+"),
+        new("Rain", @"
+fn hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43758.5453);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    var color = vec3f(0.02, 0.02, 0.05); // dark sky
+
+    // Rain layers
+    for (var layer = 0; layer < 3; layer++) {
+        let fl = f32(layer);
+        let scale = vec2f(30.0 + fl * 20.0, 5.0 + fl * 3.0);
+        let speed = 3.0 + fl * 2.0;
+        let brightness = 0.15 - fl * 0.03;
+
+        var p = uv * scale;
+        p.y -= t * speed;
+
+        let cell = floor(p);
+        let f = fract(p);
+
+        let rand = hash(cell);
+        if (rand > 0.6) {
+            // Rain drop — elongated vertically
+            let drop_x = hash(cell + 0.1);
+            let dx = abs(f.x - drop_x);
+            let drop_length = 0.3 + hash(cell + 0.2) * 0.5;
+            let dy = f.y;
+
+            let drop = smoothstep(0.015, 0.0, dx) * smoothstep(drop_length, 0.0, dy);
+            color += vec3f(0.4, 0.5, 0.7) * drop * brightness;
+        }
+    }
+
+    // Puddle ripples at bottom
+    let puddle = step(0.85, uv.y);
+    let ripple_p = vec2f(uv.x * 20.0, t * 2.0);
+    for (var i = 0; i < 3; i++) {
+        let center = vec2f(hash(vec2f(f32(i), floor(t + f32(i)))) * 20.0, fract(t + f32(i) * 0.3) * 2.0);
+        let d = length(ripple_p - center);
+        let ring = smoothstep(0.05, 0.0, abs(sin(d * 3.0) * 0.5) - 0.45) * 0.1;
+        color += ring * puddle * vec3f(0.3, 0.4, 0.5);
+    }
+
+    return vec4f(color, 1.0);
+}
+"),
+        new("Smoke", @"
+fn hash(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+}
+
+fn noise(p: vec2f) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2f(1.0, 0.0)), u.x),
+               mix(hash(i + vec2f(0.0, 1.0)), hash(i + vec2f(1.0, 1.0)), u.x), u.y);
+}
+
+fn fbm(p: vec2f) -> f32 {
+    var v = 0.0; var a = 0.5; var pos = p;
+    for (var i = 0; i < 6; i++) { v += a * noise(pos); pos *= 2.02; a *= 0.5; }
+    return v;
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time * 0.3;
+    let p = uv * 3.0;
+
+    // Domain warping — the secret to realistic smoke
+    let q = vec2f(fbm(p + t * 0.4), fbm(p + vec2f(5.2, 1.3) + t * 0.3));
+    let r2 = vec2f(fbm(p + q * 4.0 + vec2f(1.7, 9.2) + t * 0.2),
+                   fbm(p + q * 4.0 + vec2f(8.3, 2.8) + t * 0.15));
+    let f = fbm(p + r2 * 4.0);
+
+    let color_a = vec3f(0.1, 0.1, 0.15);
+    let color_b = vec3f(0.3, 0.25, 0.2);
+    let color_c = vec3f(0.8, 0.6, 0.4);
+
+    var color = mix(color_a, color_b, clamp(f * 2.0, 0.0, 1.0));
+    color = mix(color, color_c, clamp(length(q) * 0.5, 0.0, 1.0));
+    color *= 0.7 + f * 0.5;
+
+    return vec4f(color, 1.0);
+}
+"),
+        new("Disco Ball", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    let p = (uv - 0.5) * 2.0;
+    let r = length(p);
+
+    // Only draw inside the ball
+    if (r > 0.8) {
+        // Background rays
+        let a = atan2(p.y, p.x);
+        let ray = pow(abs(sin(a * 6.0 + t * 2.0)), 8.0) * 0.15 / (r * 0.5);
+        return vec4f(vec3f(ray) * vec3f(0.3, 0.1, 0.5), 1.0);
+    }
+
+    // Fake sphere UV mapping
+    let z = sqrt(max(0.0, 1.0 - p.x * p.x - p.y * p.y));
+    let sphere_a = atan2(p.x, z) + t * 0.5;
+    let sphere_b = asin(p.y / 1.0);
+
+    // Mirror tile grid
+    let tile_a = floor(sphere_a * 8.0);
+    let tile_b = floor(sphere_b * 6.0);
+    let tile_edge_a = abs(fract(sphere_a * 8.0) - 0.5);
+    let tile_edge_b = abs(fract(sphere_b * 6.0) - 0.5);
+    let edge = smoothstep(0.45, 0.5, max(tile_edge_a, tile_edge_b));
+
+    // Each tile reflects a different color
+    let hue = fract(tile_a * 0.17 + tile_b * 0.31 + t * 0.2);
+    let tile_color = clamp(abs(fract(hue + vec3f(0.0, 0.333, 0.667)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
+
+    // Specular highlight
+    let spec = pow(max(z, 0.0), 20.0) * 0.5;
+
+    // Fresnel-ish rim
+    let rim = pow(1.0 - z, 3.0) * 0.3;
+
+    let color = tile_color * (1.0 - edge) * 0.7 + edge * 0.15 + spec + rim;
     return vec4f(color, 1.0);
 }
 "),

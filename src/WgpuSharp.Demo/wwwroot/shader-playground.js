@@ -72,4 +72,27 @@ window.ShaderPlayground = {
         const ta = document.getElementById(textareaId);
         return ta ? ta.value : "";
     },
+
+    // Local storage for saved shaders
+    saveShader(name, code) {
+        const saved = JSON.parse(localStorage.getItem("wgpusharp_shaders") || "{}");
+        saved[name] = { code, savedAt: new Date().toISOString() };
+        localStorage.setItem("wgpusharp_shaders", JSON.stringify(saved));
+    },
+
+    loadShader(name) {
+        const saved = JSON.parse(localStorage.getItem("wgpusharp_shaders") || "{}");
+        return saved[name]?.code || null;
+    },
+
+    deleteShader(name) {
+        const saved = JSON.parse(localStorage.getItem("wgpusharp_shaders") || "{}");
+        delete saved[name];
+        localStorage.setItem("wgpusharp_shaders", JSON.stringify(saved));
+    },
+
+    listSavedShaders() {
+        const saved = JSON.parse(localStorage.getItem("wgpusharp_shaders") || "{}");
+        return Object.keys(saved);
+    },
 };
