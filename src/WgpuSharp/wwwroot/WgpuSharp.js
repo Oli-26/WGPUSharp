@@ -101,13 +101,13 @@ window.WgpuSharp = {
     getCurrentTexture(contextId) {
         const ctx = get(contextId);
         const texture = ctx.getCurrentTexture();
-        return store(texture);
+        return storeFrame(texture);
     },
 
     createTextureView(textureId) {
         const texture = get(textureId);
         const view = texture.createView();
-        return store(view);
+        return storeFrame(view);
     },
 
     // Shader module
@@ -284,7 +284,7 @@ window.WgpuSharp = {
     createCommandEncoder(deviceId) {
         const device = get(deviceId);
         const encoder = device.createCommandEncoder();
-        return store(encoder);
+        return storeFrame(encoder);
     },
 
     beginRenderPass(encoderId, descriptor) {
@@ -310,7 +310,7 @@ window.WgpuSharp = {
         }
 
         const pass = encoder.beginRenderPass(passDescriptor);
-        return store(pass);
+        return storeFrame(pass);
     },
 
     setPipeline(passId, pipelineId) {
@@ -346,7 +346,7 @@ window.WgpuSharp = {
     finishEncoder(encoderId) {
         const encoder = get(encoderId);
         const commandBuffer = encoder.finish();
-        return store(commandBuffer);
+        return storeFrame(commandBuffer);
     },
 
     submit(deviceId, commandBufferIds) {
@@ -371,7 +371,7 @@ window.WgpuSharp = {
     beginComputePass(encoderId) {
         const encoder = get(encoderId);
         const pass = encoder.beginComputePass();
-        return store(pass);
+        return storeFrame(pass);
     },
 
     dispatchWorkgroups(passId, x, y, z) {
