@@ -25,6 +25,8 @@
 
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="build/WgpuSharp.targets" Pack="true" PackagePath="build/" />
+    <None Include="build/WgpuSharp.targets" Pack="true" PackagePath="buildTransitive/" />
   </ItemGroup>
 
 </Project>

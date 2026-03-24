@@ -1,0 +1,14 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    Auto-import WgpuSharp namespaces for consumers.
+    Consumers get these usings automatically when referencing the NuGet package,
+    so they don't need to add @using directives to every Razor component.
+  -->
+  <ItemGroup>
+    <Using Include="WgpuSharp.Core" />
+    <Using Include="WgpuSharp.Commands" />
+    <Using Include="WgpuSharp.Resources" />
+    <Using Include="WgpuSharp.Pipeline" />
+    <Using Include="WgpuSharp.Mesh" />
+  </ItemGroup>
+</Project>
