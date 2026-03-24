@@ -1,0 +1,384 @@
+@page "/shader-playground"
+@using WgpuSharp.Core
+@using WgpuSharp.Commands
+@using WgpuSharp.Pipeline
+@using WgpuSharp.Resources
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>WgpuSharp — Shader Playground</PageTitle>
+
+<h3>Shader Playground</h3>
+<p>Write WGSL fragment shaders with live preview. Drag or click snippets to insert. Built-in uniforms: <code>time</code>, <code>resolution</code>, <code>mouse</code>.</p>
+
+<div class="snippet-palette" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;">
+    @foreach (var snippet in Snippets)
+    {
+        <div class="snippet-btn"
+             draggable="true"
+             @ondragstart="() => {}"
+             @ondragstart:preventDefault="false"
+             title="@snippet.Description"
+             style="padding: 4px 10px; background: #2a2a3a; border: 1px solid #555; border-radius: 4px; cursor: grab; font-size: 0.82em; color: #ccc; user-select: none;"
+             @onclick="() => InsertSnippet(snippet.Code)"
+             data-snippet="@snippet.Code">
+            @snippet.Label
+        </div>
+    }
+</div>
+
+<div style="display: flex; gap: 12px; height: 520px;">
+    <div style="flex: 1; display: flex; flex-direction: column;">
+        <textarea id="shader-editor"
+                  @bind="_shaderCode"
+                  @bind:event="oninput"
+                  @bind:after="OnShaderChanged"
+                  spellcheck="false"
+                  style="flex: 1; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; font-size: 13px; background: #1e1e2e; color: #cdd6f4; border: 1px solid #555; padding: 10px; resize: none; tab-size: 4; white-space: pre; overflow: auto; border-radius: 4px;"></textarea>
+
+        @if (_compileError is not null)
+        {
+            <div style="background: #3b1111; color: #ff6b6b; padding: 8px; margin-top: 4px; font-family: monospace; font-size: 12px; border-radius: 4px; max-height: 80px; overflow: auto;">
+                @_compileError
+            </div>
+        }
+        else if (_compiled)
+        {
+            <div style="background: #113b11; color: #6bff6b; padding: 4px 8px; margin-top: 4px; font-size: 12px; border-radius: 4px;">
+                Compiled OK
+            </div>
+        }
+    </div>
+    <div style="flex: 0 0 512px;">
+        <canvas id="shader-canvas" width="512" height="512"
+                style="border: 1px solid #555; display: block; border-radius: 4px; cursor: crosshair;"
+                @onmousemove="OnMouseMove"></canvas>
+        @if (_fps > 0)
+        {
+            <div style="font-size: 12px; color: #888; margin-top: 4px;">@_fps.ToString("F0") FPS</div>
+        }
+    </div>
+</div>
+
+<div style="margin-top: 10px;">
+    <strong>Templates:</strong>
+    @foreach (var tmpl in Templates)
+    {
+        <button class="btn btn-sm btn-outline-secondary" style="margin-right: 6px;"
+                @onclick="() => LoadTemplate(tmpl)">@tmpl.Name</button>
+    }
+</div>
+
+@code {
+    private string _shaderCode = "";
+    private string? _compileError;
+    private bool _compiled;
+    private float _fps;
+    private float _mouseX, _mouseY;
+    private GpuLoop? _loop;
+    private GpuDevice? _device;
+    private GpuCanvas? _canvas;
+    private GpuRenderPipeline? _currentPipeline;
+    private GpuBindGroup? _currentBindGroup;
+    private GpuBuffer? _uniformBuffer;
+    private bool _gpuReady;
+    private bool _needsRecompile;
+    private DateTime _lastEditTime;
+
+    // Fixed vertex shader — fullscreen triangle
+    private const string VertexShader = @"
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
+    var pos = array<vec2f, 3>(
+        vec2f(-1.0, -1.0),
+        vec2f( 3.0, -1.0),
+        vec2f(-1.0,  3.0),
+    );
+    var output: VertexOutput;
+    output.position = vec4f(pos[vi], 0.0, 1.0);
+    output.uv = pos[vi] * 0.5 + 0.5;
+    return output;
+}
+";
+
+    // Uniform header prepended to user's fragment shader
+    private const string UniformHeader = @"
+struct Globals {
+    time: f32,
+    _pad0: f32,
+    resolution: vec2f,
+    mouse: vec2f,
+    _pad1: vec2f,
+};
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            _device = await adapter.RequestDeviceAsync();
+            _canvas = await GpuCanvas.ConfigureAsync(_device, "shader-canvas");
+
+            _uniformBuffer = await _device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = 32, // time(4) + pad(4) + resolution(8) + mouse(8) + pad(8)
+                Usage = BufferUsage.Uniform | BufferUsage.CopyDest,
+            });
+
+            await JS.InvokeVoidAsync("ShaderPlayground.initDropZone", "shader-editor");
+            await JS.InvokeVoidAsync("ShaderPlayground.initSnippetDrag");
+
+            _gpuReady = true;
+
+            // Load default template
+            LoadTemplate(Templates[0]);
+        }
+        catch (Exception ex)
+        {
+            _compileError = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private void OnShaderChanged()
+    {
+        _lastEditTime = DateTime.UtcNow;
+        _needsRecompile = true;
+    }
+
+    private async Task InsertSnippet(string code)
+    {
+        await JS.InvokeVoidAsync("ShaderPlayground.insertAtCursor", "shader-editor", code);
+        // Re-read the value since JS modified the textarea directly
+        _shaderCode = await JS.InvokeAsync<string>("ShaderPlayground.getValue", "shader-editor");
+        _needsRecompile = true;
+        _lastEditTime = DateTime.UtcNow;
+    }
+
+    private void LoadTemplate(ShaderTemplate tmpl)
+    {
+        _shaderCode = tmpl.Code;
+        _needsRecompile = true;
+        _lastEditTime = DateTime.UtcNow;
+    }
+
+    private void OnMouseMove(Microsoft.AspNetCore.Components.Web.MouseEventArgs e)
+    {
+        _mouseX = (float)e.OffsetX / 512f;
+        _mouseY = 1f - (float)e.OffsetY / 512f;
+    }
+
+    private async Task TryRecompile()
+    {
+        if (_device is null || _canvas is null || !_gpuReady) return;
+
+        var fullShader = VertexShader + UniformHeader + _shaderCode;
+
+        try
+        {
+            var module = await _device.CreateShaderModuleAsync(fullShader);
+
+            var pipeline = await _device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState { Module = module, EntryPoint = "vs_main" },
+                Fragment = new FragmentState
+                {
+                    Module = module,
+                    EntryPoint = "fs_main",
+                    Targets = [new ColorTargetState { Format = _canvas.Format }],
+                },
+            });
+
+            var bindGroup = await _device.CreateBindGroupAsync(pipeline, 0,
+            [
+                new BindGroupEntry { Binding = 0, Buffer = _uniformBuffer!, Size = 32 },
+            ]);
+
+            // Dispose old resources
+            if (_currentPipeline is not null) await _currentPipeline.DisposeAsync();
+            if (_currentBindGroup is not null) await _currentBindGroup.DisposeAsync();
+
+            _currentPipeline = pipeline;
+            _currentBindGroup = bindGroup;
+            _compileError = null;
+            _compiled = true;
+
+            // Start loop if not running
+            if (_loop is null)
+            {
+                float totalTime = 0;
+                var uniformBytes = new byte[32];
+
+                _loop = await Gpu.RunLoopAsync(_device, async (frame) =>
+                {
+                    totalTime += frame.DeltaTime;
+                    _fps = frame.Fps;
+
+                    // Hot reload check — debounce 400ms
+                    if (_needsRecompile && (DateTime.UtcNow - _lastEditTime).TotalMilliseconds > 400)
+                    {
+                        _needsRecompile = false;
+                        await TryRecompile();
+                        StateHasChanged();
+                    }
+
+                    if (_currentPipeline is null || _currentBindGroup is null) return;
+
+                    // Write uniforms: time, pad, resolution, mouse, pad
+                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(0), totalTime);
+                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(8), 512f);
+                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(12), 512f);
+                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(16), _mouseX);
+                    BitConverter.TryWriteBytes(uniformBytes.AsSpan(20), _mouseY);
+
+                    var batch = new RenderBatch(_device);
+                    batch.WriteBuffer(_uniformBuffer!, uniformBytes);
+                    var colorView = batch.GetCurrentTextureView(_canvas);
+                    var pass = batch.BeginRenderPass(colorView, new GpuColor(0, 0, 0, 1));
+                    pass.SetPipeline(_currentPipeline);
+                    pass.SetBindGroup(0, _currentBindGroup);
+                    pass.Draw(3);
+                    pass.EndAndSubmit();
+                    await batch.FlushAsync();
+
+                    if (frame.FrameIndex % 60 == 0) StateHasChanged();
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _compileError = ex.Message;
+            _compiled = false;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_loop is not null) await _loop.DisposeAsync();
+        if (_currentPipeline is not null) await _currentPipeline.DisposeAsync();
+        if (_currentBindGroup is not null) await _currentBindGroup.DisposeAsync();
+        if (_uniformBuffer is not null) await _uniformBuffer.DisposeAsync();
+    }
+
+    // ---- Snippet definitions ----
+    private static readonly SnippetDef[] Snippets =
+    [
+        new("UV Gradient", "Color from UV coordinates",
+            "    let color = vec3f(uv, 0.5);\n"),
+        new("Time Pulse", "Sine wave pulsing with time",
+            "    let pulse = sin(globals.time * 3.0) * 0.5 + 0.5;\n"),
+        new("Circle", "Signed distance circle",
+            "    let d = length(uv - vec2f(0.5)) - 0.3;\n    let circle = 1.0 - smoothstep(0.0, 0.01, d);\n"),
+        new("Stripes", "Animated diagonal stripes",
+            "    let stripes = sin((uv.x + uv.y) * 20.0 + globals.time * 2.0) * 0.5 + 0.5;\n"),
+        new("Mouse Glow", "Glow following mouse position",
+            "    let glow = 0.05 / length(uv - globals.mouse);\n"),
+        new("Noise (Hash)", "Simple hash-based noise",
+            "    let n = fract(sin(dot(floor(uv * 10.0), vec2f(12.9898, 78.233))) * 43758.5453);\n"),
+        new("Checkerboard", "Tiled checkerboard pattern",
+            "    let check = step(0.5, fract(floor(uv.x * 8.0) + floor(uv.y * 8.0)) * 0.5);\n"),
+        new("Rotate UV", "Rotate UVs around center",
+            "    let angle = globals.time;\n    let c = cos(angle); let s = sin(angle);\n    let ruv = mat2x2f(c, -s, s, c) * (uv - 0.5) + 0.5;\n"),
+        new("Color Mix", "Mix two colors",
+            "    let col = mix(vec3f(0.1, 0.3, 0.8), vec3f(0.9, 0.2, 0.1), uv.x);\n"),
+        new("Radial Wave", "Expanding rings from center",
+            "    let wave = sin(length(uv - 0.5) * 30.0 - globals.time * 5.0) * 0.5 + 0.5;\n"),
+        new("Vignette", "Dark edges vignette effect",
+            "    let vig = 1.0 - length(uv - 0.5) * 1.2;\n"),
+        new("Pixelate", "Pixelation effect",
+            "    let pixelSize = 32.0;\n    let puv = floor(uv * pixelSize) / pixelSize;\n"),
+    ];
+
+    private static readonly ShaderTemplate[] Templates =
+    [
+        new("Gradient", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let color = vec3f(uv, sin(globals.time) * 0.5 + 0.5);
+    return vec4f(color, 1.0);
+}
+"),
+        new("Circles", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let p = uv - 0.5;
+    let d = length(p);
+    let rings = sin(d * 40.0 - globals.time * 4.0) * 0.5 + 0.5;
+    let glow = 0.02 / d;
+    let color = vec3f(rings * 0.3, rings * 0.6, rings) + glow * 0.1;
+    return vec4f(color, 1.0);
+}
+"),
+        new("Plasma", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let t = globals.time;
+    var v = 0.0;
+    v += sin(uv.x * 10.0 + t);
+    v += sin((uv.y * 10.0 + t) * 0.5);
+    v += sin((uv.x * 10.0 + uv.y * 10.0 + t) * 0.5);
+    let c = v * 0.5;
+    let r = sin(c * 3.14159) * 0.5 + 0.5;
+    let g = sin(c * 3.14159 + 2.094) * 0.5 + 0.5;
+    let b = sin(c * 3.14159 + 4.188) * 0.5 + 0.5;
+    return vec4f(r, g, b, 1.0);
+}
+"),
+        new("Mouse Light", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let d = length(uv - globals.mouse);
+    let light = 0.03 / (d * d + 0.01);
+    let color = vec3f(light * 0.3, light * 0.5, light);
+    return vec4f(color, 1.0);
+}
+"),
+        new("SDF Shapes", @"
+fn sdBox(p: vec2f, b: vec2f) -> f32 {
+    let d = abs(p) - b;
+    return length(max(d, vec2f(0.0))) + min(max(d.x, d.y), 0.0);
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let p = uv - 0.5;
+    let angle = globals.time * 0.5;
+    let c = cos(angle); let s = sin(angle);
+    let rp = vec2f(c * p.x - s * p.y, s * p.x + c * p.y);
+
+    let box = sdBox(rp, vec2f(0.2, 0.15));
+    let circle = length(p) - 0.25;
+    let shape = max(box, -circle); // intersection
+
+    let edge = 1.0 - smoothstep(0.0, 0.005, abs(shape));
+    let fill = 1.0 - smoothstep(0.0, 0.005, shape);
+    let color = vec3f(fill * 0.2, fill * 0.4, fill * 0.8) + edge * 0.5;
+    return vec4f(color, 1.0);
+}
+"),
+        new("Blank", @"
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    // uv: 0..1 screen coordinates
+    // globals.time: seconds since start
+    // globals.resolution: canvas size in pixels
+    // globals.mouse: mouse position 0..1
+
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+}
+"),
+    ];
+
+    private record SnippetDef(string Label, string Description, string Code);
+    private record ShaderTemplate(string Name, string Code);
+}

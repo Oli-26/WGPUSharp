@@ -1,0 +1,334 @@
+@page "/reaction-diffusion"
+@using WgpuSharp.Core
+@using WgpuSharp.Commands
+@using WgpuSharp.Pipeline
+@using WgpuSharp.Resources
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>WgpuSharp — Reaction-Diffusion</PageTitle>
+
+<h3>Reaction-Diffusion Simulation</h3>
+<p>Phase 3: compute shaders, storage buffers, dispatch workgroups (batched rendering)</p>
+@if (_fps > 0)
+{
+    <p><strong>@_fps.ToString("F0") FPS</strong></p>
+}
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+else if (!_ready)
+{
+    <p>Initialising WebGPU...</p>
+}
+
+<canvas id="gpu-canvas" width="512" height="512" style="border: 1px solid #333; display: block;"></canvas>
+
+@code {
+    private bool _ready;
+    private string? _error;
+    private GpuLoop? _loop;
+    private float _fps;
+
+    private const int Width = 512;
+    private const int Height = 512;
+    private const int SimStepsPerFrame = 4;
+
+    // Gray-Scott reaction-diffusion compute shader
+    private const string ComputeShader = @"
+struct Params {
+    width: u32,
+    height: u32,
+    feed: f32,
+    kill: f32,
+    dt: f32,
+    diffA: f32,
+    diffB: f32,
+    _pad: u32,
+};
+
+@group(0) @binding(0) var<uniform> params: Params;
+@group(0) @binding(1) var<storage, read> gridIn: array<vec2f>;
+@group(0) @binding(2) var<storage, read_write> gridOut: array<vec2f>;
+
+fn idx(x: u32, y: u32) -> u32 {
+    return y * params.width + x;
+}
+
+fn laplacian(x: u32, y: u32) -> vec2f {
+    let w = params.width;
+    let h = params.height;
+
+    let xm = (x + w - 1u) % w;
+    let xp = (x + 1u) % w;
+    let ym = (y + h - 1u) % h;
+    let yp = (y + 1u) % h;
+
+    let center = gridIn[idx(x, y)];
+    let lap = gridIn[idx(xm, y)] + gridIn[idx(xp, y)]
+            + gridIn[idx(x, ym)] + gridIn[idx(x, yp)]
+            - 4.0 * center;
+    return lap;
+}
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+    let x = gid.x;
+    let y = gid.y;
+    if (x >= params.width || y >= params.height) { return; }
+
+    let i = idx(x, y);
+    let ab = gridIn[i];
+    let a = ab.x;
+    let b = ab.y;
+    let lap = laplacian(x, y);
+
+    let reaction = a * b * b;
+    let newA = a + (params.diffA * lap.x - reaction + params.feed * (1.0 - a)) * params.dt;
+    let newB = b + (params.diffB * lap.y + reaction - (params.kill + params.feed) * b) * params.dt;
+
+    gridOut[i] = vec2f(clamp(newA, 0.0, 1.0), clamp(newB, 0.0, 1.0));
+}
+";
+
+    // Render the grid as a fullscreen quad using vertex pulling
+    private const string RenderShader = @"
+struct Params {
+    width: u32,
+    height: u32,
+    feed: f32,
+    kill: f32,
+    dt: f32,
+    diffA: f32,
+    diffB: f32,
+    _pad: u32,
+};
+
+@group(0) @binding(0) var<uniform> params: Params;
+@group(0) @binding(1) var<storage, read> grid: array<vec2f>;
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
+    // Fullscreen triangle
+    var pos = array<vec2f, 3>(
+        vec2f(-1.0, -1.0),
+        vec2f( 3.0, -1.0),
+        vec2f(-1.0,  3.0),
+    );
+    var output: VertexOutput;
+    output.position = vec4f(pos[vi], 0.0, 1.0);
+    output.uv = pos[vi] * 0.5 + 0.5;
+    return output;
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let x = u32(uv.x * f32(params.width));
+    let y = u32((1.0 - uv.y) * f32(params.height));
+    let i = y * params.width + x;
+    let ab = grid[i];
+
+    let b = ab.y;
+    // Color map: dark blue → cyan → white based on chemical B concentration
+    let c1 = vec3f(0.01, 0.02, 0.08);
+    let c2 = vec3f(0.1, 0.6, 0.8);
+    let c3 = vec3f(1.0, 1.0, 1.0);
+
+    var color: vec3f;
+    if (b < 0.3) {
+        color = mix(c1, c2, b / 0.3);
+    } else {
+        color = mix(c2, c3, (b - 0.3) / 0.7);
+    }
+
+    return vec4f(color, 1.0);
+}
+";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            var device = await adapter.RequestDeviceAsync();
+            var canvas = await GpuCanvas.ConfigureAsync(device, "gpu-canvas");
+
+            var computeModule = await device.CreateShaderModuleAsync(ComputeShader);
+            var renderModule = await device.CreateShaderModuleAsync(RenderShader);
+
+            // Params buffer: width, height, feed, kill, dt, diffA, diffB, pad = 8 * 4 = 32 bytes
+            float feed = 0.055f;
+            float kill = 0.062f;
+            float dt = 1.0f;
+            float diffA = 1.0f;
+            float diffB = 0.5f;
+
+            var paramsData = new byte[32];
+            BitConverter.TryWriteBytes(paramsData.AsSpan(0), Width);
+            BitConverter.TryWriteBytes(paramsData.AsSpan(4), Height);
+            BitConverter.TryWriteBytes(paramsData.AsSpan(8), feed);
+            BitConverter.TryWriteBytes(paramsData.AsSpan(12), kill);
+            BitConverter.TryWriteBytes(paramsData.AsSpan(16), dt);
+            BitConverter.TryWriteBytes(paramsData.AsSpan(20), diffA);
+            BitConverter.TryWriteBytes(paramsData.AsSpan(24), diffB);
+            // pad at 28, stays 0
+
+            var paramsBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = 32,
+                Usage = BufferUsage.Uniform | BufferUsage.CopyDest,
+            });
+            await paramsBuffer.WriteAsync(paramsData);
+
+            // Grid buffers: 2 ping-pong storage buffers, each vec2f per cell
+            long gridSize = Width * Height * 2 * sizeof(float);
+            var gridA = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = gridSize,
+                Usage = BufferUsage.Storage | BufferUsage.CopyDest,
+            });
+            var gridB = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = gridSize,
+                Usage = BufferUsage.Storage | BufferUsage.CopyDest,
+            });
+
+            // Initialize grid: A=1, B=0 everywhere, then seed center region with B
+            var initData = new float[Width * Height * 2];
+            for (int i = 0; i < Width * Height; i++)
+            {
+                initData[i * 2] = 1.0f;     // A
+                initData[i * 2 + 1] = 0.0f; // B
+            }
+
+            // Seed a square region in the center with B=1
+            var rng = new Random(42);
+            int cx = Width / 2, cy = Height / 2, r = 20;
+            for (int y = cy - r; y < cy + r; y++)
+            {
+                for (int x = cx - r; x < cx + r; x++)
+                {
+                    int idx = (y * Width + x) * 2;
+                    initData[idx] = 0.5f + (float)(rng.NextDouble() * 0.1 - 0.05);
+                    initData[idx + 1] = 0.25f + (float)(rng.NextDouble() * 0.1 - 0.05);
+                }
+            }
+
+            await gridA.WriteAsync(initData);
+
+            // Compute pipeline
+            var computePipeline = await device.CreateComputePipelineAsync(new ComputePipelineDescriptor
+            {
+                Compute = new ComputeState
+                {
+                    Module = computeModule,
+                    EntryPoint = "main",
+                },
+            });
+
+            // Bind groups for ping-pong: forward (A→B) and reverse (B→A)
+            var computeBindGroupAB = await device.CreateBindGroupAsync(computePipeline, 0,
+            [
+                new BindGroupEntry { Binding = 0, Buffer = paramsBuffer, Size = 32 },
+                new BindGroupEntry { Binding = 1, Buffer = gridA, Size = gridSize },
+                new BindGroupEntry { Binding = 2, Buffer = gridB, Size = gridSize },
+            ]);
+            var computeBindGroupBA = await device.CreateBindGroupAsync(computePipeline, 0,
+            [
+                new BindGroupEntry { Binding = 0, Buffer = paramsBuffer, Size = 32 },
+                new BindGroupEntry { Binding = 1, Buffer = gridB, Size = gridSize },
+                new BindGroupEntry { Binding = 2, Buffer = gridA, Size = gridSize },
+            ]);
+
+            // Render pipeline — fullscreen triangle, no vertex buffers
+            var renderPipeline = await device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState
+                {
+                    Module = renderModule,
+                    EntryPoint = "vs_main",
+                },
+                Fragment = new FragmentState
+                {
+                    Module = renderModule,
+                    EntryPoint = "fs_main",
+                    Targets = [new ColorTargetState { Format = canvas.Format }],
+                },
+            });
+
+            // Render bind groups — read from whichever grid is current
+            var renderBindGroupA = await device.CreateBindGroupAsync(renderPipeline, 0,
+            [
+                new BindGroupEntry { Binding = 0, Buffer = paramsBuffer, Size = 32 },
+                new BindGroupEntry { Binding = 1, Buffer = gridA, Size = gridSize },
+            ]);
+            var renderBindGroupB = await device.CreateBindGroupAsync(renderPipeline, 0,
+            [
+                new BindGroupEntry { Binding = 0, Buffer = paramsBuffer, Size = 32 },
+                new BindGroupEntry { Binding = 1, Buffer = gridB, Size = gridSize },
+            ]);
+
+            int workgroupsX = (Width + 7) / 8;
+            int workgroupsY = (Height + 7) / 8;
+            bool pingPong = false; // false = A is current input
+
+            _loop = await Gpu.RunLoopAsync(device, async (frame) =>
+            {
+                _fps = frame.Fps;
+
+                // Batched — all compute + render in a single JS interop call
+                var batch = new RenderBatch(device);
+                var encoder = batch.CreateEncoder();
+
+                // Run multiple simulation steps per frame
+                for (int step = 0; step < SimStepsPerFrame; step++)
+                {
+                    var pass = encoder.BeginComputePass();
+                    pass.SetPipeline(computePipeline);
+                    pass.SetBindGroup(0, pingPong ? computeBindGroupBA : computeBindGroupAB);
+                    pass.DispatchWorkgroups(workgroupsX, workgroupsY);
+                    pass.End();
+                    pingPong = !pingPong;
+                }
+
+                // Render the current state
+                var colorView = batch.GetCurrentTextureView(canvas);
+                var renderPass = encoder.BeginRenderPass(colorView, new GpuColor(0, 0, 0, 1));
+                renderPass.SetPipeline(renderPipeline);
+                renderPass.SetBindGroup(0, pingPong ? renderBindGroupB : renderBindGroupA);
+                renderPass.Draw(3);
+                renderPass.End();
+
+                encoder.Submit();
+                await batch.FlushAsync();
+
+                if (frame.FrameIndex % 30 == 0) StateHasChanged();
+            });
+
+            _ready = true;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_loop is not null)
+        {
+            await _loop.DisposeAsync();
+        }
+    }
+}

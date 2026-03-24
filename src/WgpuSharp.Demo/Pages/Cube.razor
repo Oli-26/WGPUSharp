@@ -1,0 +1,279 @@
+@page "/cube"
+@using System.Numerics
+@using WgpuSharp.Core
+@using WgpuSharp.Commands
+@using WgpuSharp.Pipeline
+@using WgpuSharp.Resources
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>WgpuSharp — Spinning Cube</PageTitle>
+
+<h3>Spinning Cube Demo</h3>
+<p>Phase 2: index buffers, uniform buffers, bind groups, depth buffer, game loop (batched rendering)</p>
+@if (_fps > 0)
+{
+    <p><strong>@_fps.ToString("F0") FPS</strong></p>
+}
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+else if (!_ready)
+{
+    <p>Initialising WebGPU...</p>
+}
+
+<canvas id="gpu-canvas" width="800" height="600" style="border: 1px solid #333; display: block;"></canvas>
+
+@code {
+    private bool _ready;
+    private string? _error;
+    private GpuLoop? _loop;
+    private float _fps;
+
+    private const string ShaderSource = @"
+struct Uniforms {
+    mvp: mat4x4f,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) color: vec3f,
+};
+
+@vertex
+fn vs_main(@location(0) position: vec3f, @location(1) color: vec3f) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = uniforms.mvp * vec4f(position, 1.0);
+    output.color = color;
+    return output;
+}
+
+@fragment
+fn fs_main(@location(0) color: vec3f) -> @location(0) vec4f {
+    return vec4f(color, 1.0);
+}
+";
+
+    // Cube vertex data: position (x, y, z) + color (r, g, b)
+    private static readonly float[] Vertices =
+    [
+        // Front face — red
+        -0.5f, -0.5f,  0.5f,  1.0f, 0.2f, 0.2f,
+         0.5f, -0.5f,  0.5f,  1.0f, 0.2f, 0.2f,
+         0.5f,  0.5f,  0.5f,  1.0f, 0.2f, 0.2f,
+        -0.5f,  0.5f,  0.5f,  1.0f, 0.2f, 0.2f,
+        // Back face — green
+        -0.5f, -0.5f, -0.5f,  0.2f, 1.0f, 0.2f,
+         0.5f, -0.5f, -0.5f,  0.2f, 1.0f, 0.2f,
+         0.5f,  0.5f, -0.5f,  0.2f, 1.0f, 0.2f,
+        -0.5f,  0.5f, -0.5f,  0.2f, 1.0f, 0.2f,
+        // Top face — blue
+        -0.5f,  0.5f,  0.5f,  0.2f, 0.2f, 1.0f,
+         0.5f,  0.5f,  0.5f,  0.2f, 0.2f, 1.0f,
+         0.5f,  0.5f, -0.5f,  0.2f, 0.2f, 1.0f,
+        -0.5f,  0.5f, -0.5f,  0.2f, 0.2f, 1.0f,
+        // Bottom face — yellow
+        -0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 0.2f,
+         0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 0.2f,
+         0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 0.2f,
+        -0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 0.2f,
+        // Right face — magenta
+         0.5f, -0.5f,  0.5f,  1.0f, 0.2f, 1.0f,
+         0.5f, -0.5f, -0.5f,  1.0f, 0.2f, 1.0f,
+         0.5f,  0.5f, -0.5f,  1.0f, 0.2f, 1.0f,
+         0.5f,  0.5f,  0.5f,  1.0f, 0.2f, 1.0f,
+        // Left face — cyan
+        -0.5f, -0.5f,  0.5f,  0.2f, 1.0f, 1.0f,
+        -0.5f, -0.5f, -0.5f,  0.2f, 1.0f, 1.0f,
+        -0.5f,  0.5f, -0.5f,  0.2f, 1.0f, 1.0f,
+        -0.5f,  0.5f,  0.5f,  0.2f, 1.0f, 1.0f,
+    ];
+
+    private static readonly ushort[] Indices =
+    [
+        // Front
+         0,  1,  2,   0,  2,  3,
+        // Back
+         5,  4,  7,   5,  7,  6,
+        // Top
+         8,  9, 10,   8, 10, 11,
+        // Bottom
+        13, 12, 15,  13, 15, 14,
+        // Right
+        16, 17, 18,  16, 18, 19,
+        // Left
+        21, 20, 23,  21, 23, 22,
+    ];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            var device = await adapter.RequestDeviceAsync();
+            var canvas = await GpuCanvas.ConfigureAsync(device, "gpu-canvas");
+            var shader = await device.CreateShaderModuleAsync(ShaderSource);
+
+            // Vertex buffer
+            var vertexBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = Vertices.Length * sizeof(float),
+                Usage = BufferUsage.Vertex | BufferUsage.CopyDest,
+            });
+            await vertexBuffer.WriteAsync(Vertices);
+
+            // Index buffer
+            var indexBytes = new byte[Indices.Length * sizeof(ushort)];
+            Buffer.BlockCopy(Indices, 0, indexBytes, 0, indexBytes.Length);
+            var indexBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = indexBytes.Length,
+                Usage = BufferUsage.Index | BufferUsage.CopyDest,
+            });
+            await indexBuffer.WriteAsync(indexBytes);
+
+            // Uniform buffer (4x4 matrix = 64 bytes)
+            var uniformBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = 64,
+                Usage = BufferUsage.Uniform | BufferUsage.CopyDest,
+            });
+
+            // Depth texture
+            var depthTexture = await canvas.CreateDepthTextureAsync(device);
+            var depthView = await depthTexture.CreateViewAsync();
+
+            // Render pipeline with depth
+            var pipeline = await device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState
+                {
+                    Module = shader,
+                    EntryPoint = "vs_main",
+                    Buffers =
+                    [
+                        new VertexBufferLayout
+                        {
+                            ArrayStride = 6 * sizeof(float),
+                            Attributes =
+                            [
+                                new VertexAttribute { ShaderLocation = 0, Offset = 0, Format = VertexFormat.Float32x3 },
+                                new VertexAttribute { ShaderLocation = 1, Offset = 3 * sizeof(float), Format = VertexFormat.Float32x3 },
+                            ],
+                        },
+                    ],
+                },
+                Fragment = new FragmentState
+                {
+                    Module = shader,
+                    EntryPoint = "fs_main",
+                    Targets = [new ColorTargetState { Format = canvas.Format }],
+                },
+                DepthStencil = new DepthStencilState
+                {
+                    Format = TextureFormat.Depth24Plus,
+                    DepthWriteEnabled = true,
+                    DepthCompare = CompareFunction.Less,
+                },
+                CullMode = CullMode.Back,
+            });
+
+            // Bind group for uniforms
+            var bindGroup = await device.CreateBindGroupAsync(pipeline, 0,
+            [
+                new BindGroupEntry { Binding = 0, Buffer = uniformBuffer, Size = 64 },
+            ]);
+
+            float totalTime = 0f;
+
+            _loop = await Gpu.RunLoopAsync(device, async (frame) =>
+            {
+                totalTime += frame.DeltaTime;
+                _fps = frame.Fps;
+
+                // Build MVP matrix
+                var model = Matrix4x4.CreateRotationY(totalTime) *
+                            Matrix4x4.CreateRotationX(totalTime * 0.7f);
+                var view = Matrix4x4.CreateLookAt(
+                    new Vector3(0, 0, 3),
+                    Vector3.Zero,
+                    Vector3.UnitY);
+                var proj = CreatePerspective(MathF.PI / 4f, 800f / 600f, 0.1f, 100f);
+                var mvp = model * view * proj;
+
+                // Batched rendering — single JS interop call for the entire frame
+                var batch = new RenderBatch(device);
+
+                var mvpBytes = new byte[64];
+                WriteMatrix(mvp, mvpBytes);
+                batch.WriteBuffer(uniformBuffer, mvpBytes);
+
+                var colorView = batch.GetCurrentTextureView(canvas);
+                var pass = batch.BeginRenderPass(colorView,
+                    new GpuColor(0.05, 0.05, 0.08, 1.0), depthView);
+
+                pass.SetPipeline(pipeline);
+                pass.SetBindGroup(0, bindGroup);
+                pass.SetVertexBuffer(0, vertexBuffer);
+                pass.SetIndexBuffer(indexBuffer, IndexFormat.Uint16);
+                pass.DrawIndexed(Indices.Length);
+                pass.EndAndSubmit();
+
+                await batch.FlushAsync();
+
+                if (frame.FrameIndex % 30 == 0) StateHasChanged();
+            });
+
+            _ready = true;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private static void WriteMatrix(Matrix4x4 m, byte[] dest)
+    {
+        // System.Numerics stores row-major. GPU reads column-major.
+        // Row-major bytes read as column-major = implicit transpose,
+        // which converts row-vector MVP to column-vector MVP for WGSL.
+        float[] values =
+        [
+            m.M11, m.M12, m.M13, m.M14,
+            m.M21, m.M22, m.M23, m.M24,
+            m.M31, m.M32, m.M33, m.M34,
+            m.M41, m.M42, m.M43, m.M44,
+        ];
+        Buffer.BlockCopy(values, 0, dest, 0, 64);
+    }
+
+    private static Matrix4x4 CreatePerspective(float fovY, float aspect, float near, float far)
+    {
+        // WebGPU clip space: Z in [0, 1], Y up
+        float f = 1.0f / MathF.Tan(fovY / 2.0f);
+        float rangeInv = 1.0f / (near - far);
+        return new Matrix4x4(
+            f / aspect, 0,  0,                0,
+            0,          f,  0,                0,
+            0,          0,  far * rangeInv,  -1,
+            0,          0,  near * far * rangeInv, 0
+        );
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_loop is not null)
+        {
+            await _loop.DisposeAsync();
+        }
+    }
+}

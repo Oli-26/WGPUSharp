@@ -1,0 +1,357 @@
+@page "/fly"
+@using System.Numerics
+@using WgpuSharp.Core
+@using WgpuSharp.Commands
+@using WgpuSharp.Pipeline
+@using WgpuSharp.Resources
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>WgpuSharp — Fly Camera</PageTitle>
+
+<h3>Fly Camera Demo</h3>
+<p>Click canvas to capture mouse. WASD to move, mouse to look, Space/Shift for up/down, Scroll to change speed.</p>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+@if (_fps > 0)
+{
+    <p><strong>@_fps.ToString("F0") FPS</strong> | Objects: @ObjectCount | Press Esc to release mouse</p>
+}
+
+<canvas id="gpu-canvas" width="800" height="600" style="border: 1px solid #333; display: block; cursor: crosshair;"></canvas>
+
+@code {
+    private string? _error;
+    private float _fps;
+    private GpuLoop? _loop;
+    private GpuInput? _input;
+
+    private const int GridSize = 12;
+    private const int ObjectCount = GridSize * GridSize * GridSize;
+
+    private const string ShaderSource = @"
+struct Uniforms {
+    viewProj: mat4x4f,
+};
+
+struct InstanceData {
+    @location(3) model0: vec4f,
+    @location(4) model1: vec4f,
+    @location(5) model2: vec4f,
+    @location(6) model3: vec4f,
+    @location(7) color: vec4f,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) normal: vec3f,
+    @location(1) color: vec3f,
+};
+
+@vertex
+fn vs_main(
+    @location(0) pos: vec3f,
+    @location(1) normal: vec3f,
+    inst: InstanceData,
+) -> VertexOutput {
+    let model = mat4x4f(inst.model0, inst.model1, inst.model2, inst.model3);
+    let worldPos = model * vec4f(pos, 1.0);
+
+    var output: VertexOutput;
+    output.position = uniforms.viewProj * worldPos;
+    // Simplified normal transform (assumes uniform scale)
+    output.normal = (model * vec4f(normal, 0.0)).xyz;
+    output.color = inst.color.rgb;
+    return output;
+}
+
+@fragment
+fn fs_main(@location(0) normal: vec3f, @location(1) color: vec3f) -> @location(0) vec4f {
+    let n = normalize(normal);
+    let light = normalize(vec3f(0.5, 1.0, 0.3));
+    let ambient = 0.15;
+    let diffuse = max(dot(n, light), 0.0) * 0.75;
+    let rim = pow(1.0 - max(dot(n, vec3f(0.0, 0.0, 1.0)), 0.0), 3.0) * 0.1;
+    return vec4f(color * (ambient + diffuse) + vec3f(rim), 1.0);
+}
+";
+
+    // Unit cube geometry
+    private static readonly float[] CubeVertices = GenerateCubeVertices();
+    private static readonly ushort[] CubeIndices = GenerateCubeIndices();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            var device = await adapter.RequestDeviceAsync();
+            var canvas = await GpuCanvas.ConfigureAsync(device, "gpu-canvas");
+            _input = await GpuInput.InitAsync(device, "gpu-canvas");
+
+            var shader = await device.CreateShaderModuleAsync(ShaderSource);
+
+            // Vertex buffer (pos + normal)
+            var vertexBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = CubeVertices.Length * sizeof(float),
+                Usage = BufferUsage.Vertex | BufferUsage.CopyDest,
+            });
+            await vertexBuffer.WriteAsync(CubeVertices);
+
+            // Index buffer
+            var indexBytes = new byte[CubeIndices.Length * sizeof(ushort)];
+            Buffer.BlockCopy(CubeIndices, 0, indexBytes, 0, indexBytes.Length);
+            var indexBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = indexBytes.Length,
+                Usage = BufferUsage.Index | BufferUsage.CopyDest,
+            });
+            await indexBuffer.WriteAsync(indexBytes);
+
+            // Instance buffer: 4x vec4f model matrix + vec4f color = 80 bytes per instance
+            int instanceStride = 80;
+            var instanceData = new float[ObjectCount * 20]; // 20 floats per instance
+            var rng = new Random(123);
+            int idx = 0;
+            float spacing = 3.0f;
+            float half = (GridSize - 1) * spacing / 2f;
+
+            for (int x = 0; x < GridSize; x++)
+            for (int y = 0; y < GridSize; y++)
+            for (int z = 0; z < GridSize; z++)
+            {
+                float px = x * spacing - half;
+                float py = y * spacing - half;
+                float pz = z * spacing - half;
+                float scale = 0.3f + (float)rng.NextDouble() * 0.7f;
+
+                // Model matrix (scale + translate), stored column-major for WGSL
+                // Col 0
+                instanceData[idx++] = scale; instanceData[idx++] = 0; instanceData[idx++] = 0; instanceData[idx++] = 0;
+                // Col 1
+                instanceData[idx++] = 0; instanceData[idx++] = scale; instanceData[idx++] = 0; instanceData[idx++] = 0;
+                // Col 2
+                instanceData[idx++] = 0; instanceData[idx++] = 0; instanceData[idx++] = scale; instanceData[idx++] = 0;
+                // Col 3
+                instanceData[idx++] = px; instanceData[idx++] = py; instanceData[idx++] = pz; instanceData[idx++] = 1;
+
+                // Color (HSV-ish based on position)
+                float r = (float)x / GridSize;
+                float g = (float)y / GridSize;
+                float b = (float)z / GridSize;
+                instanceData[idx++] = 0.3f + r * 0.7f;
+                instanceData[idx++] = 0.3f + g * 0.7f;
+                instanceData[idx++] = 0.3f + b * 0.7f;
+                instanceData[idx++] = 1.0f;
+            }
+
+            var instanceBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = instanceData.Length * sizeof(float),
+                Usage = BufferUsage.Vertex | BufferUsage.CopyDest,
+            });
+            await instanceBuffer.WriteAsync(instanceData);
+
+            // Uniform buffer (viewProj = 64 bytes)
+            var uniformBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = 64,
+                Usage = BufferUsage.Uniform | BufferUsage.CopyDest,
+            });
+
+            // Depth
+            var depthTexture = await canvas.CreateDepthTextureAsync(device);
+            var depthView = await depthTexture.CreateViewAsync();
+
+            // Pipeline with instancing
+            var pipeline = await device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState
+                {
+                    Module = shader,
+                    EntryPoint = "vs_main",
+                    Buffers =
+                    [
+                        // Vertex data: pos(3) + normal(3)
+                        new VertexBufferLayout
+                        {
+                            ArrayStride = 6 * sizeof(float),
+                            StepMode = VertexStepMode.Vertex,
+                            Attributes =
+                            [
+                                new VertexAttribute { ShaderLocation = 0, Offset = 0, Format = VertexFormat.Float32x3 },
+                                new VertexAttribute { ShaderLocation = 1, Offset = 3 * sizeof(float), Format = VertexFormat.Float32x3 },
+                            ],
+                        },
+                        // Instance data: model(4x vec4f) + color(vec4f)
+                        new VertexBufferLayout
+                        {
+                            ArrayStride = instanceStride,
+                            StepMode = VertexStepMode.Instance,
+                            Attributes =
+                            [
+                                new VertexAttribute { ShaderLocation = 3, Offset = 0, Format = VertexFormat.Float32x4 },
+                                new VertexAttribute { ShaderLocation = 4, Offset = 16, Format = VertexFormat.Float32x4 },
+                                new VertexAttribute { ShaderLocation = 5, Offset = 32, Format = VertexFormat.Float32x4 },
+                                new VertexAttribute { ShaderLocation = 6, Offset = 48, Format = VertexFormat.Float32x4 },
+                                new VertexAttribute { ShaderLocation = 7, Offset = 64, Format = VertexFormat.Float32x4 },
+                            ],
+                        },
+                    ],
+                },
+                Fragment = new FragmentState
+                {
+                    Module = shader,
+                    EntryPoint = "fs_main",
+                    Targets = [new ColorTargetState { Format = canvas.Format }],
+                },
+                DepthStencil = new DepthStencilState { Format = TextureFormat.Depth24Plus, DepthWriteEnabled = true, DepthCompare = CompareFunction.Less },
+                CullMode = CullMode.Back,
+            });
+
+            var bindGroup = await device.CreateBindGroupAsync(pipeline, 0,
+            [
+                new BindGroupEntry { Binding = 0, Buffer = uniformBuffer, Size = 64 },
+            ]);
+
+            // Camera state
+            var camPos = new Vector3(0, 5, 30);
+            float yaw = 0, pitch = 0;
+            float moveSpeed = 10f;
+            var uniformBytes = new byte[64]; // pre-allocate
+
+            _loop = await Gpu.RunLoopAsync(device, async (frame) =>
+            {
+                _fps = frame.Fps;
+                float dt = frame.DeltaTime;
+
+                // Poll input
+                var input = await _input!.GetStateAsync();
+
+                // Mouse look
+                if (input.PointerLocked)
+                {
+                    yaw -= input.MouseDX * 0.003f;
+                    pitch -= input.MouseDY * 0.003f;
+                    pitch = MathF.Max(-1.5f, MathF.Min(1.5f, pitch));
+                }
+
+                // Scroll to change speed
+                if (input.WheelDelta != 0)
+                {
+                    moveSpeed *= input.WheelDelta > 0 ? 0.85f : 1.18f;
+                    moveSpeed = MathF.Max(1f, MathF.Min(100f, moveSpeed));
+                }
+
+                // Forward/right vectors
+                var forward = new Vector3(MathF.Sin(yaw) * MathF.Cos(pitch), MathF.Sin(pitch), -MathF.Cos(yaw) * MathF.Cos(pitch));
+                var right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
+                var up = Vector3.UnitY;
+
+                float speed = moveSpeed * dt;
+                if (input.IsKeyDown("KeyW")) camPos += forward * speed;
+                if (input.IsKeyDown("KeyS")) camPos -= forward * speed;
+                if (input.IsKeyDown("KeyA")) camPos -= right * speed;
+                if (input.IsKeyDown("KeyD")) camPos += right * speed;
+                if (input.IsKeyDown("Space")) camPos += up * speed;
+                if (input.IsKeyDown("ShiftLeft") || input.IsKeyDown("ShiftRight")) camPos -= up * speed;
+
+                // View-projection
+                var view = Matrix4x4.CreateLookAt(camPos, camPos + forward, up);
+                var proj = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 3f, 800f / 600f, 0.1f, 500f);
+                var vp = view * proj;
+                WriteMatrix(vp, uniformBytes, 0);
+
+                // Batched render
+                var batch = new RenderBatch(device);
+                batch.WriteBuffer(uniformBuffer, uniformBytes);
+
+                var colorView = batch.GetCurrentTextureView(canvas);
+                var pass = batch.BeginRenderPass(colorView, new GpuColor(0.02, 0.02, 0.04, 1.0), depthView);
+                pass.SetPipeline(pipeline);
+                pass.SetBindGroup(0, bindGroup);
+                pass.SetVertexBuffer(0, vertexBuffer);
+                pass.SetVertexBuffer(1, instanceBuffer);
+                pass.SetIndexBuffer(indexBuffer, IndexFormat.Uint16);
+                pass.DrawIndexed(CubeIndices.Length, ObjectCount);
+                pass.EndAndSubmit();
+
+                await batch.FlushAsync();
+
+                if (frame.FrameIndex % 30 == 0) StateHasChanged();
+            });
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private static void WriteMatrix(Matrix4x4 m, byte[] dest, int offset)
+    {
+        float[] values =
+        [
+            m.M11, m.M12, m.M13, m.M14,
+            m.M21, m.M22, m.M23, m.M24,
+            m.M31, m.M32, m.M33, m.M34,
+            m.M41, m.M42, m.M43, m.M44,
+        ];
+        Buffer.BlockCopy(values, 0, dest, offset, 64);
+    }
+
+    private static float[] GenerateCubeVertices()
+    {
+        // 24 vertices (4 per face), each: pos(3) + normal(3)
+        return
+        [
+            // Front (+Z)
+            -0.5f,-0.5f, 0.5f,  0, 0, 1,   0.5f,-0.5f, 0.5f,  0, 0, 1,
+             0.5f, 0.5f, 0.5f,  0, 0, 1,  -0.5f, 0.5f, 0.5f,  0, 0, 1,
+            // Back (-Z)
+             0.5f,-0.5f,-0.5f,  0, 0,-1,  -0.5f,-0.5f,-0.5f,  0, 0,-1,
+            -0.5f, 0.5f,-0.5f,  0, 0,-1,   0.5f, 0.5f,-0.5f,  0, 0,-1,
+            // Top (+Y)
+            -0.5f, 0.5f, 0.5f,  0, 1, 0,   0.5f, 0.5f, 0.5f,  0, 1, 0,
+             0.5f, 0.5f,-0.5f,  0, 1, 0,  -0.5f, 0.5f,-0.5f,  0, 1, 0,
+            // Bottom (-Y)
+            -0.5f,-0.5f,-0.5f,  0,-1, 0,   0.5f,-0.5f,-0.5f,  0,-1, 0,
+             0.5f,-0.5f, 0.5f,  0,-1, 0,  -0.5f,-0.5f, 0.5f,  0,-1, 0,
+            // Right (+X)
+             0.5f,-0.5f, 0.5f,  1, 0, 0,   0.5f,-0.5f,-0.5f,  1, 0, 0,
+             0.5f, 0.5f,-0.5f,  1, 0, 0,   0.5f, 0.5f, 0.5f,  1, 0, 0,
+            // Left (-X)
+            -0.5f,-0.5f,-0.5f, -1, 0, 0,  -0.5f,-0.5f, 0.5f, -1, 0, 0,
+            -0.5f, 0.5f, 0.5f, -1, 0, 0,  -0.5f, 0.5f,-0.5f, -1, 0, 0,
+        ];
+    }
+
+    private static ushort[] GenerateCubeIndices()
+    {
+        var indices = new ushort[36];
+        for (int face = 0; face < 6; face++)
+        {
+            int b = face * 4;
+            int i = face * 6;
+            indices[i] = (ushort)b; indices[i+1] = (ushort)(b+1); indices[i+2] = (ushort)(b+2);
+            indices[i+3] = (ushort)b; indices[i+4] = (ushort)(b+2); indices[i+5] = (ushort)(b+3);
+        }
+        return indices;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_loop is not null) await _loop.DisposeAsync();
+        if (_input is not null) await _input.DisposeAsync();
+    }
+}

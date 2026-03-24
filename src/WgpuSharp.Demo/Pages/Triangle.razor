@@ -1,0 +1,131 @@
+@page "/triangle"
+@using WgpuSharp.Core
+@using WgpuSharp.Commands
+@using WgpuSharp.Pipeline
+@using WgpuSharp.Resources
+@inject IJSRuntime JS
+
+<PageTitle>WgpuSharp — Triangle Demo</PageTitle>
+
+<h3>Triangle Demo</h3>
+<p>Phase 1: basic render pipeline, vertex buffer, single draw call</p>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+else if (!_ready)
+{
+    <p>Initialising WebGPU...</p>
+}
+
+<canvas id="gpu-canvas" width="800" height="600" style="border: 1px solid #333; display: block;"></canvas>
+
+@code {
+    private bool _ready;
+    private string? _error;
+
+    private const string ShaderSource = @"
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) color: vec3f,
+};
+
+@vertex
+fn vs_main(@location(0) position: vec2f, @location(1) color: vec3f) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = vec4f(position, 0.0, 1.0);
+    output.color = color;
+    return output;
+}
+
+@fragment
+fn fs_main(@location(0) color: vec3f) -> @location(0) vec4f {
+    return vec4f(color, 1.0);
+}
+";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            var device = await adapter.RequestDeviceAsync();
+            var canvas = await GpuCanvas.ConfigureAsync(device, "gpu-canvas");
+            var shader = await device.CreateShaderModuleAsync(ShaderSource);
+
+            float[] vertices =
+            [
+                 0.0f,  0.5f,  1.0f, 0.0f, 0.0f,
+                -0.5f, -0.5f,  0.0f, 1.0f, 0.0f,
+                 0.5f, -0.5f,  0.0f, 0.0f, 1.0f,
+            ];
+
+            var vertexBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = vertices.Length * sizeof(float),
+                Usage = BufferUsage.Vertex | BufferUsage.CopyDest,
+            });
+            await vertexBuffer.WriteAsync(vertices);
+
+            var pipeline = await device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState
+                {
+                    Module = shader,
+                    EntryPoint = "vs_main",
+                    Buffers =
+                    [
+                        new VertexBufferLayout
+                        {
+                            ArrayStride = 5 * sizeof(float),
+                            Attributes =
+                            [
+                                new VertexAttribute { ShaderLocation = 0, Offset = 0, Format = VertexFormat.Float32x2 },
+                                new VertexAttribute { ShaderLocation = 1, Offset = 2 * sizeof(float), Format = VertexFormat.Float32x3 },
+                            ],
+                        },
+                    ],
+                },
+                Fragment = new FragmentState
+                {
+                    Module = shader,
+                    EntryPoint = "fs_main",
+                    Targets = [new ColorTargetState { Format = canvas.Format }],
+                },
+            });
+
+            var textureView = await canvas.GetCurrentTextureViewAsync();
+            var encoder = await device.CreateCommandEncoderAsync();
+            var pass = await encoder.BeginRenderPassAsync(new RenderPassDescriptor
+            {
+                ColorAttachments =
+                [
+                    new ColorAttachment
+                    {
+                        View = textureView,
+                        ClearValue = new GpuColor(0.1, 0.1, 0.1, 1.0),
+                    },
+                ],
+            });
+
+            await pass.SetPipelineAsync(pipeline);
+            await pass.SetVertexBufferAsync(0, vertexBuffer);
+            await pass.DrawAsync(3);
+            await pass.EndAsync();
+
+            var commandBuffer = await encoder.FinishAsync();
+            await device.Queue.SubmitAsync(commandBuffer);
+
+            _ready = true;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+}

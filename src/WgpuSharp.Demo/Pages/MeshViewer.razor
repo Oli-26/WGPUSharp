@@ -1,0 +1,617 @@
+@page "/mesh-viewer"
+@using System.Numerics
+@using WgpuSharp.Core
+@using WgpuSharp.Commands
+@using WgpuSharp.Pipeline
+@using WgpuSharp.Resources
+@using WgpuSharp.Mesh
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>WgpuSharp — Mesh Viewer</PageTitle>
+
+<h3>Mesh Viewer</h3>
+
+<div style="display: flex; gap: 24px; margin-bottom: 12px; flex-wrap: wrap;">
+    <div>
+        <label style="font-weight: bold; display: block; margin-bottom: 4px;">1. Load Mesh</label>
+        <InputFile OnChange="OnMeshSelected" accept=".obj,.glb,.stl" />
+        <div style="color: #888; font-size: 0.85em; margin-top: 2px;">.obj, .glb, .stl</div>
+    </div>
+    <div>
+        <label style="font-weight: bold; display: block; margin-bottom: 4px;">2. Apply Material (optional)</label>
+        <InputFile OnChange="OnMaterialSelected" accept=".mtl,.png,.jpg,.jpeg" disabled="@(!_hasMesh)" />
+        <div style="color: #888; font-size: 0.85em; margin-top: 2px;">.mtl file or .png/.jpg texture</div>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+@if (_status is not null)
+{
+    <p>@_status</p>
+}
+@if (_materialStatus is not null)
+{
+    <p>@_materialStatus</p>
+}
+@if (_fps > 0)
+{
+    <p><strong>@_fps.ToString("F0") FPS</strong></p>
+}
+
+<canvas id="gpu-canvas" width="800" height="600" style="border: 1px solid #333; display: block;"></canvas>
+
+@code {
+    private string? _error;
+    private string? _status;
+    private string? _materialStatus;
+    private GpuLoop? _loop;
+    private GpuDevice? _device;
+    private float _fps;
+    private GpuCanvas? _canvas;
+    private GpuTextureView? _depthView;
+    private bool _gpuReady;
+    private bool _hasMesh;
+
+    // Current loaded meshes (kept for re-rendering with new materials)
+    private WgpuSharp.Mesh.Mesh[]? _loadedMeshes;
+    private Vector3 _meshCenter;
+    private float _cameraDistance;
+
+    private GpuRenderPipeline? _texturedPipeline;
+    private GpuRenderPipeline? _untexturedPipeline;
+
+    private const string ShaderSource = @"
+struct Uniforms {
+    mvp: mat4x4f,
+    normalMatrix: mat4x4f,
+};
+
+struct MaterialUniforms {
+    baseColor: vec4f,
+    emissive: vec3f,
+    metallic: f32,
+    roughness: f32,
+    hasTexture: u32,
+    _pad0: u32,
+    _pad1: u32,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var<uniform> material: MaterialUniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) normal: vec3f,
+    @location(1) uv: vec2f,
+    @location(2) worldPos: vec3f,
+};
+
+@vertex
+fn vs_untextured(@location(0) position: vec3f, @location(1) normal: vec3f) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = uniforms.mvp * vec4f(position, 1.0);
+    output.normal = (uniforms.normalMatrix * vec4f(normal, 0.0)).xyz;
+    output.uv = vec2f(0.0);
+    output.worldPos = position;
+    return output;
+}
+
+@vertex
+fn vs_textured(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = uniforms.mvp * vec4f(position, 1.0);
+    output.normal = (uniforms.normalMatrix * vec4f(normal, 0.0)).xyz;
+    output.uv = uv;
+    output.worldPos = position;
+    return output;
+}
+
+@fragment
+fn fs_untextured(@location(0) normal: vec3f, @location(1) uv: vec2f, @location(2) worldPos: vec3f) -> @location(0) vec4f {
+    return shade(normal, material.baseColor);
+}
+
+fn shade(normal: vec3f, albedo: vec4f) -> vec4f {
+    let n = normalize(normal);
+    let lightDir1 = normalize(vec3f(1.0, 1.0, 1.0));
+    let lightDir2 = normalize(vec3f(-1.0, 0.3, -0.5));
+
+    let ambient = 0.1;
+    let diffuse1 = max(dot(n, lightDir1), 0.0) * 0.7;
+    let diffuse2 = max(dot(n, lightDir2), 0.0) * 0.3;
+
+    let viewDir = normalize(vec3f(0.0, 0.0, 1.0));
+    let halfDir = normalize(lightDir1 + viewDir);
+    let specPower = mix(8.0, 128.0, 1.0 - material.roughness);
+    let spec = pow(max(dot(n, halfDir), 0.0), specPower) * mix(0.04, 1.0, material.metallic);
+
+    let brightness = ambient + diffuse1 + diffuse2;
+    var color = albedo.rgb * brightness + vec3f(spec) + material.emissive;
+
+    return vec4f(color, albedo.a);
+}
+";
+
+    private const string TexturedFragSource = @"
+struct Uniforms {
+    mvp: mat4x4f,
+    normalMatrix: mat4x4f,
+};
+
+struct MaterialUniforms {
+    baseColor: vec4f,
+    emissive: vec3f,
+    metallic: f32,
+    roughness: f32,
+    hasTexture: u32,
+    _pad0: u32,
+    _pad1: u32,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var<uniform> material: MaterialUniforms;
+@group(1) @binding(0) var texSampler: sampler;
+@group(1) @binding(1) var baseColorTex: texture_2d<f32>;
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) normal: vec3f,
+    @location(1) uv: vec2f,
+    @location(2) worldPos: vec3f,
+};
+
+@vertex
+fn vs_textured(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = uniforms.mvp * vec4f(position, 1.0);
+    output.normal = (uniforms.normalMatrix * vec4f(normal, 0.0)).xyz;
+    output.uv = uv;
+    output.worldPos = position;
+    return output;
+}
+
+@fragment
+fn fs_textured(@location(0) normal: vec3f, @location(1) uv: vec2f, @location(2) worldPos: vec3f) -> @location(0) vec4f {
+    let texColor = textureSample(baseColorTex, texSampler, uv);
+    let albedo = texColor * material.baseColor;
+    return shade(normal, albedo);
+}
+
+fn shade(normal: vec3f, albedo: vec4f) -> vec4f {
+    let n = normalize(normal);
+    let lightDir1 = normalize(vec3f(1.0, 1.0, 1.0));
+    let lightDir2 = normalize(vec3f(-1.0, 0.3, -0.5));
+
+    let ambient = 0.1;
+    let diffuse1 = max(dot(n, lightDir1), 0.0) * 0.7;
+    let diffuse2 = max(dot(n, lightDir2), 0.0) * 0.3;
+
+    let viewDir = normalize(vec3f(0.0, 0.0, 1.0));
+    let halfDir = normalize(lightDir1 + viewDir);
+    let specPower = mix(8.0, 128.0, 1.0 - material.roughness);
+    let spec = pow(max(dot(n, halfDir), 0.0), specPower) * mix(0.04, 1.0, material.metallic);
+
+    let brightness = ambient + diffuse1 + diffuse2;
+    var color = albedo.rgb * brightness + vec3f(spec) + material.emissive;
+
+    return vec4f(color, albedo.a);
+}
+";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _gpuReady) return;
+
+        try
+        {
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            _device = await adapter.RequestDeviceAsync();
+            _canvas = await GpuCanvas.ConfigureAsync(_device, "gpu-canvas");
+
+            var untexturedModule = await _device.CreateShaderModuleAsync(ShaderSource);
+            var texturedModule = await _device.CreateShaderModuleAsync(TexturedFragSource);
+
+            var depthTexture = await _canvas.CreateDepthTextureAsync(_device);
+            _depthView = await depthTexture.CreateViewAsync();
+
+            _untexturedPipeline = await _device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState
+                {
+                    Module = untexturedModule,
+                    EntryPoint = "vs_untextured",
+                    Buffers =
+                    [
+                        new VertexBufferLayout
+                        {
+                            ArrayStride = 6 * sizeof(float),
+                            Attributes =
+                            [
+                                new VertexAttribute { ShaderLocation = 0, Offset = 0, Format = VertexFormat.Float32x3 },
+                                new VertexAttribute { ShaderLocation = 1, Offset = 3 * sizeof(float), Format = VertexFormat.Float32x3 },
+                            ],
+                        },
+                    ],
+                },
+                Fragment = new FragmentState
+                {
+                    Module = untexturedModule,
+                    EntryPoint = "fs_untextured",
+                    Targets = [new ColorTargetState { Format = _canvas.Format }],
+                },
+                DepthStencil = new DepthStencilState { Format = TextureFormat.Depth24Plus, DepthWriteEnabled = true, DepthCompare = CompareFunction.Less },
+                CullMode = CullMode.Back,
+            });
+
+            _texturedPipeline = await _device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState
+                {
+                    Module = texturedModule,
+                    EntryPoint = "vs_textured",
+                    Buffers =
+                    [
+                        new VertexBufferLayout
+                        {
+                            ArrayStride = 8 * sizeof(float),
+                            Attributes =
+                            [
+                                new VertexAttribute { ShaderLocation = 0, Offset = 0, Format = VertexFormat.Float32x3 },
+                                new VertexAttribute { ShaderLocation = 1, Offset = 3 * sizeof(float), Format = VertexFormat.Float32x3 },
+                                new VertexAttribute { ShaderLocation = 2, Offset = 6 * sizeof(float), Format = VertexFormat.Float32x2 },
+                            ],
+                        },
+                    ],
+                },
+                Fragment = new FragmentState
+                {
+                    Module = texturedModule,
+                    EntryPoint = "fs_textured",
+                    Targets = [new ColorTargetState { Format = _canvas.Format }],
+                },
+                DepthStencil = new DepthStencilState { Format = TextureFormat.Depth24Plus, DepthWriteEnabled = true, DepthCompare = CompareFunction.Less },
+                CullMode = CullMode.Back,
+            });
+
+            _gpuReady = true;
+            _status = "GPU ready. Load a mesh file to get started.";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnMeshSelected(InputFileChangeEventArgs e)
+    {
+        if (!_gpuReady || _device is null || _canvas is null) return;
+
+        _error = null;
+        _materialStatus = null;
+        _status = "Loading mesh...";
+        StateHasChanged();
+
+        try
+        {
+            var file = e.File;
+            using var stream = file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var data = ms.ToArray();
+
+            var meshes = MeshLoader.Load(data, file.Name);
+            if (meshes.Length == 0)
+            {
+                _error = "No meshes found in file.";
+                return;
+            }
+
+            _loadedMeshes = meshes;
+            ComputeBounds(meshes);
+
+            bool hasEmbeddedMaterials = meshes.Any(m =>
+                m.Material != Material.Default ||
+                m.Material.HasBaseColorTexture);
+            string materialNote = hasEmbeddedMaterials
+                ? " (embedded materials loaded)"
+                : " — use 'Apply Material' to add a texture or .mtl file";
+
+            int totalVerts = meshes.Sum(m => m.VertexCount);
+            int totalIdx = meshes.Sum(m => m.IndexCount);
+            _status = $"Loaded: {file.Name} — {meshes.Length} mesh(es), {totalVerts:N0} vertices, {totalIdx:N0} indices{materialNote}";
+
+            await RebuildAndStartRenderLoop();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnMaterialSelected(InputFileChangeEventArgs e)
+    {
+        if (!_gpuReady || _device is null || _canvas is null || _loadedMeshes is null) return;
+
+        _error = null;
+        _materialStatus = "Applying material...";
+        StateHasChanged();
+
+        try
+        {
+            var file = e.File;
+            using var stream = file.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var data = ms.ToArray();
+
+            var ext = Path.GetExtension(file.Name).ToLowerInvariant();
+
+            if (ext == ".mtl")
+            {
+                // Parse MTL and apply to all meshes
+                var mtlText = System.Text.Encoding.UTF8.GetString(data);
+                var materials = MtlLoader.Load(mtlText);
+
+                if (materials.Count == 0)
+                {
+                    _error = "No materials found in .mtl file.";
+                    return;
+                }
+
+                // Apply first material to all meshes (or match by name if available)
+                var firstMat = materials.Values.First();
+                _loadedMeshes = _loadedMeshes.Select(m =>
+                {
+                    // Try to match by material name, fall back to first
+                    var mat = materials.TryGetValue(m.Material.Name, out var matched) ? matched : firstMat;
+                    return new WgpuSharp.Mesh.Mesh
+                    {
+                        Positions = m.Positions,
+                        Normals = m.Normals,
+                        TexCoords = m.TexCoords,
+                        Indices = m.Indices,
+                        Material = mat,
+                    };
+                }).ToArray();
+
+                _materialStatus = $"Applied material: {firstMat.Name} — color ({firstMat.BaseColor.X:F2}, {firstMat.BaseColor.Y:F2}, {firstMat.BaseColor.Z:F2}), metallic {firstMat.Metallic:F2}, roughness {firstMat.Roughness:F2}";
+            }
+            else if (ext is ".png" or ".jpg" or ".jpeg")
+            {
+                // Apply image as base color texture to all meshes
+                // Auto-generate box UVs if the mesh doesn't have any
+                bool generatedUVs = false;
+                _loadedMeshes = _loadedMeshes.Select(m =>
+                {
+                    var mesh = m;
+                    if (!mesh.HasTexCoords)
+                    {
+                        mesh = mesh.GenerateBoxUVs();
+                        generatedUVs = true;
+                    }
+                    return new WgpuSharp.Mesh.Mesh
+                    {
+                        Positions = mesh.Positions,
+                        Normals = mesh.Normals,
+                        TexCoords = mesh.TexCoords,
+                        Indices = mesh.Indices,
+                        Material = new Material
+                        {
+                            Name = mesh.Material.Name,
+                            BaseColor = mesh.Material.BaseColor,
+                            Metallic = mesh.Material.Metallic,
+                            Roughness = mesh.Material.Roughness,
+                            Emissive = mesh.Material.Emissive,
+                            BaseColorTextureData = data,
+                        },
+                    };
+                }).ToArray();
+
+                _materialStatus = generatedUVs
+                    ? $"Applied texture: {file.Name} (box-projected UVs generated automatically)"
+                    : $"Applied texture: {file.Name}";
+            }
+            else
+            {
+                _error = $"Unsupported material file: {ext}. Use .mtl, .png, or .jpg.";
+                return;
+            }
+
+            await RebuildAndStartRenderLoop();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private void ComputeBounds(WgpuSharp.Mesh.Mesh[] meshes)
+    {
+        var allPositions = meshes.SelectMany(m => m.Positions).ToArray();
+        _meshCenter = Vector3.Zero;
+        foreach (var p in allPositions)
+            _meshCenter += p;
+        if (allPositions.Length > 0)
+            _meshCenter /= allPositions.Length;
+
+        float maxDist = 0;
+        foreach (var p in allPositions)
+            maxDist = MathF.Max(maxDist, Vector3.Distance(p, _meshCenter));
+
+        _cameraDistance = maxDist * 2.5f;
+        if (_cameraDistance < 0.01f) _cameraDistance = 3f;
+    }
+
+    private async Task RebuildAndStartRenderLoop()
+    {
+        if (_device is null || _canvas is null || _loadedMeshes is null) return;
+
+        // Stop existing loop
+        if (_loop is not null)
+        {
+            await _loop.DisposeAsync();
+            _loop = null;
+        }
+
+        var renderMeshes = new List<RenderableMesh>();
+
+        foreach (var mesh in _loadedMeshes)
+        {
+            var m = mesh;
+            if (!m.HasNormals)
+                m = m.ComputeFlatNormals();
+
+            bool hasTexture = m.Material.HasBaseColorTexture && m.HasTexCoords;
+            var pipeline = hasTexture ? _texturedPipeline! : _untexturedPipeline!;
+
+            var buffers = await m.CreateBuffersAsync(_device);
+
+            var uniformBuffer = await _device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = 128,
+                Usage = BufferUsage.Uniform | BufferUsage.CopyDest,
+            });
+
+            var materialBuffer = await _device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = 48,
+                Usage = BufferUsage.Uniform | BufferUsage.CopyDest,
+            });
+            await materialBuffer.WriteAsync(m.Material.GetUniformBytes());
+
+            var bindGroup0 = await _device.CreateBindGroupAsync(pipeline, 0,
+            [
+                new BindGroupEntry { Binding = 0, Buffer = uniformBuffer, Size = 128 },
+                new BindGroupEntry { Binding = 1, Buffer = materialBuffer, Size = 48 },
+            ]);
+
+            GpuBindGroup? bindGroup1 = null;
+            if (hasTexture)
+            {
+                var texture = await _device.CreateTextureFromImageAsync(m.Material.BaseColorTextureData!);
+                var textureView = await texture.CreateViewAsync();
+                var sampler = await _device.CreateSamplerAsync(new SamplerDescriptor
+                {
+                    MagFilter = FilterMode.Linear,
+                    MinFilter = FilterMode.Linear,
+                });
+
+                bindGroup1 = await _device.CreateBindGroupAsync(pipeline, 1,
+                [
+                    new BindGroupEntry { Binding = 0, Sampler = sampler },
+                    new BindGroupEntry { Binding = 1, TextureView = textureView },
+                ]);
+            }
+
+            renderMeshes.Add(new RenderableMesh
+            {
+                Buffers = buffers,
+                Pipeline = pipeline,
+                UniformBuffer = uniformBuffer,
+                BindGroup0 = bindGroup0,
+                BindGroup1 = bindGroup1,
+            });
+        }
+
+        _hasMesh = true;
+        float totalTime = 0f;
+        var device = _device;
+        var canvas = _canvas;
+        var depthView = _depthView!;
+        var center = _meshCenter;
+        var camDist = _cameraDistance;
+
+        _loop = await Gpu.RunLoopAsync(device, async (frame) =>
+        {
+            totalTime += frame.DeltaTime;
+            _fps = frame.Fps;
+
+            var model = Matrix4x4.CreateTranslation(-center) *
+                        Matrix4x4.CreateRotationY(totalTime * 0.5f);
+            var view = Matrix4x4.CreateLookAt(
+                new Vector3(0, camDist * 0.4f, camDist),
+                Vector3.Zero,
+                Vector3.UnitY);
+            var proj = Matrix4x4.CreatePerspectiveFieldOfView(
+                MathF.PI / 4f, 800f / 600f, camDist * 0.01f, camDist * 10f);
+
+            var mvp = model * view * proj;
+            Matrix4x4.Invert(model, out var modelInv);
+            var normalMatrix = Matrix4x4.Transpose(modelInv);
+
+            var uniformData = new byte[128];
+            WriteMatrix(mvp, uniformData, 0);
+            WriteMatrix(normalMatrix, uniformData, 64);
+
+            var batch = new RenderBatch(device);
+
+            foreach (var rm in renderMeshes)
+                batch.WriteBuffer(rm.UniformBuffer, uniformData);
+
+            var colorView = batch.GetCurrentTextureView(canvas);
+            var pass = batch.BeginRenderPass(colorView,
+                new GpuColor(0.08, 0.08, 0.1, 1.0), depthView);
+
+            foreach (var rm in renderMeshes)
+            {
+                pass.SetPipeline(rm.Pipeline);
+                pass.SetBindGroup(0, rm.BindGroup0);
+                if (rm.BindGroup1 is not null)
+                    pass.SetBindGroup(1, rm.BindGroup1);
+                pass.SetVertexBuffer(0, rm.Buffers.VertexBuffer);
+
+                if (rm.Buffers.IndexBuffer is not null)
+                {
+                    pass.SetIndexBuffer(rm.Buffers.IndexBuffer, IndexFormat.Uint32);
+                    pass.DrawIndexed(rm.Buffers.IndexCount);
+                }
+                else
+                {
+                    pass.Draw(rm.Buffers.VertexCount);
+                }
+            }
+
+            pass.EndAndSubmit();
+            await batch.FlushAsync();
+
+            if (frame.FrameIndex % 30 == 0) StateHasChanged();
+        });
+
+        StateHasChanged();
+    }
+
+    private static void WriteMatrix(Matrix4x4 m, byte[] dest, int offset)
+    {
+        float[] values =
+        [
+            m.M11, m.M12, m.M13, m.M14,
+            m.M21, m.M22, m.M23, m.M24,
+            m.M31, m.M32, m.M33, m.M34,
+            m.M41, m.M42, m.M43, m.M44,
+        ];
+        Buffer.BlockCopy(values, 0, dest, offset, 64);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_loop is not null)
+            await _loop.DisposeAsync();
+    }
+
+    private sealed class RenderableMesh
+    {
+        public required MeshBuffers Buffers { get; init; }
+        public required GpuRenderPipeline Pipeline { get; init; }
+        public required GpuBuffer UniformBuffer { get; init; }
+        public required GpuBindGroup BindGroup0 { get; init; }
+        public GpuBindGroup? BindGroup1 { get; init; }
+    }
+}

@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{EE1F9DA5-4C9A-4FA1-9524-6E8D47A0A9FD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WgpuSharp", "src\WgpuSharp\WgpuSharp.csproj", "{9628E0DF-7AA5-436E-85A3-9A496121249B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WgpuSharp.Demo", "src\WgpuSharp.Demo\WgpuSharp.Demo.csproj", "{8476066A-FE7E-40F0-BBF1-22EC1942848E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9628E0DF-7AA5-436E-85A3-9A496121249B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9628E0DF-7AA5-436E-85A3-9A496121249B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9628E0DF-7AA5-436E-85A3-9A496121249B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9628E0DF-7AA5-436E-85A3-9A496121249B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8476066A-FE7E-40F0-BBF1-22EC1942848E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8476066A-FE7E-40F0-BBF1-22EC1942848E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8476066A-FE7E-40F0-BBF1-22EC1942848E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8476066A-FE7E-40F0-BBF1-22EC1942848E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{9628E0DF-7AA5-436E-85A3-9A496121249B} = {EE1F9DA5-4C9A-4FA1-9524-6E8D47A0A9FD}
+		{8476066A-FE7E-40F0-BBF1-22EC1942848E} = {EE1F9DA5-4C9A-4FA1-9524-6E8D47A0A9FD}
+	EndGlobalSection
+EndGlobal
