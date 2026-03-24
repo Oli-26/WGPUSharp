@@ -72,6 +72,31 @@ public sealed class RenderBatch
     }
 
     /// <summary>
+    /// Begin a render pass targeting a user-created texture (render-to-texture).
+    /// Use this for shadow maps, post-processing, offscreen rendering, etc.
+    /// </summary>
+    /// <param name="colorView">A texture view to render into (created from a texture with RenderAttachment usage).</param>
+    /// <param name="clearColor">The color to clear to.</param>
+    /// <param name="depthView">Optional depth buffer view.</param>
+    /// <param name="colorLoadOp">How to initialize the color attachment. Default: Clear.</param>
+    /// <param name="colorStoreOp">What to do with the color attachment after the pass. Default: Store.</param>
+    /// <param name="depthLoadOp">How to initialize the depth attachment. Default: Clear.</param>
+    /// <param name="depthStoreOp">What to do with the depth attachment after the pass. Default: Store.</param>
+    public BatchedRenderPass BeginRenderPass(GpuTextureView colorView, GpuColor clearColor,
+        GpuTextureView? depthView = null,
+        LoadOp colorLoadOp = LoadOp.Clear, StoreOp colorStoreOp = StoreOp.Store,
+        LoadOp depthLoadOp = LoadOp.Clear, StoreOp depthStoreOp = StoreOp.Store)
+    {
+        int encoderRef = _batch.CreateCommandEncoder(_device.Handle);
+
+        var colorAttachments = BuildColorAttachments(colorView.Handle, clearColor, colorLoadOp, colorStoreOp);
+        var depthAttachment = BuildDepthAttachment(depthView, depthLoadOp, depthStoreOp);
+
+        int passRef = _batch.BeginRenderPass(encoderRef, colorAttachments, depthAttachment);
+        return new BatchedRenderPass(_batch, _device.Handle, encoderRef, passRef);
+    }
+
+    /// <summary>
     /// Begin encoding a compute pass within this batch.
     /// </summary>
     public BatchedComputePass BeginComputePass()
@@ -249,6 +274,19 @@ public sealed class BatchedEncoder
         LoadOp depthLoadOp = LoadOp.Clear, StoreOp depthStoreOp = StoreOp.Store)
     {
         var colorAttachments = RenderBatch.BuildColorAttachments(colorView.Ref, clearColor, colorLoadOp, colorStoreOp);
+        var depthAttachment = RenderBatch.BuildDepthAttachment(depthView, depthLoadOp, depthStoreOp);
+
+        int passRef = _batch.BeginRenderPass(_encoderRef, colorAttachments, depthAttachment);
+        return new BatchedRenderPass(_batch, _deviceHandle, _encoderRef, passRef);
+    }
+
+    /// <summary>Begin a render pass targeting a user-created texture (render-to-texture).</summary>
+    public BatchedRenderPass BeginRenderPass(GpuTextureView colorView, GpuColor clearColor,
+        GpuTextureView? depthView = null,
+        LoadOp colorLoadOp = LoadOp.Clear, StoreOp colorStoreOp = StoreOp.Store,
+        LoadOp depthLoadOp = LoadOp.Clear, StoreOp depthStoreOp = StoreOp.Store)
+    {
+        var colorAttachments = RenderBatch.BuildColorAttachments(colorView.Handle, clearColor, colorLoadOp, colorStoreOp);
         var depthAttachment = RenderBatch.BuildDepthAttachment(depthView, depthLoadOp, depthStoreOp);
 
         int passRef = _batch.BeginRenderPass(_encoderRef, colorAttachments, depthAttachment);
