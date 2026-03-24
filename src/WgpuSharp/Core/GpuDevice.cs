@@ -25,14 +25,31 @@ public sealed class GpuDevice
         Queue = new GpuQueue(bridge, handle);
     }
 
-    /// <summary>Compiles a WGSL shader into a GPU shader module.</summary>
+    /// <summary>
+    /// Compiles a WGSL shader into a GPU shader module.
+    /// Throws <see cref="ShaderCompilationException"/> with line numbers if the shader has errors.
+    /// </summary>
     /// <param name="wgslCode">The WGSL shader source code.</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <exception cref="ShaderCompilationException">Thrown when the shader contains compilation errors.</exception>
     public async Task<GpuShaderModule> CreateShaderModuleAsync(string wgslCode, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(wgslCode);
         var handle = await Bridge.CreateShaderModuleAsync(Handle, wgslCode, ct);
-        return new GpuShaderModule(Bridge, handle);
+        var module = new GpuShaderModule(Bridge, handle);
+
+        // Check for compilation errors
+        var info = await Bridge.GetShaderCompilationInfoAsync(handle, ct);
+        var errors = info.Messages.Where(m => m.Type == "error").ToArray();
+        if (errors.Length > 0)
+        {
+            var summary = $"Shader compilation failed with {errors.Length} error(s): {errors[0].Message}";
+            if (errors[0].LineNum > 0)
+                summary = $"Shader error at line {errors[0].LineNum}: {errors[0].Message}";
+            throw new ShaderCompilationException(summary, info.Messages);
+        }
+
+        return module;
     }
 
     /// <summary>Creates a GPU buffer for vertex data, index data, uniforms, or storage.</summary>
@@ -92,14 +109,22 @@ public sealed class GpuDevice
     }
 
     /// <summary>Creates a render pipeline from vertex/fragment shaders and pipeline configuration.</summary>
+    /// <exception cref="GpuException">Thrown when pipeline creation fails (e.g. incompatible shader/layout).</exception>
     public async Task<GpuRenderPipeline> CreateRenderPipelineAsync(RenderPipelineDescriptor descriptor, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
         ArgumentNullException.ThrowIfNull(descriptor.Vertex);
         ArgumentNullException.ThrowIfNull(descriptor.Fragment);
-        var jsDescriptor = descriptor.ToJsObject();
-        var handle = await Bridge.CreateRenderPipelineAsync(Handle, jsDescriptor, ct);
-        return new GpuRenderPipeline(Bridge, handle);
+        try
+        {
+            var jsDescriptor = descriptor.ToJsObject();
+            var handle = await Bridge.CreateRenderPipelineAsync(Handle, jsDescriptor, ct);
+            return new GpuRenderPipeline(Bridge, handle);
+        }
+        catch (Microsoft.JSInterop.JSException ex)
+        {
+            throw new GpuException($"Failed to create render pipeline: {ex.Message}", ex);
+        }
     }
 
     /// <summary>Creates a command encoder for recording GPU commands. For game loops, prefer <see cref="RenderBatch"/> instead.</summary>
@@ -110,13 +135,21 @@ public sealed class GpuDevice
     }
 
     /// <summary>Creates a compute pipeline for GPGPU workloads.</summary>
+    /// <exception cref="GpuException">Thrown when pipeline creation fails.</exception>
     public async Task<GpuComputePipeline> CreateComputePipelineAsync(ComputePipelineDescriptor descriptor, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
         ArgumentNullException.ThrowIfNull(descriptor.Compute);
-        var jsDescriptor = descriptor.ToJsObject();
-        var handle = await Bridge.CreateComputePipelineAsync(Handle, jsDescriptor, ct);
-        return new GpuComputePipeline(Bridge, handle);
+        try
+        {
+            var jsDescriptor = descriptor.ToJsObject();
+            var handle = await Bridge.CreateComputePipelineAsync(Handle, jsDescriptor, ct);
+            return new GpuComputePipeline(Bridge, handle);
+        }
+        catch (Microsoft.JSInterop.JSException ex)
+        {
+            throw new GpuException($"Failed to create compute pipeline: {ex.Message}", ex);
+        }
     }
 
     /// <summary>Writes raw RGBA pixel data to a texture.</summary>

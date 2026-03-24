@@ -45,6 +45,9 @@ internal sealed class JsBridge
     public ValueTask<int> CreateShaderModuleAsync(int deviceId, string wgslCode, CancellationToken ct = default)
         => _js.InvokeAsync<int>("WgpuSharp.createShaderModule", ct, deviceId, wgslCode);
 
+    public ValueTask<Core.ShaderCompilationInfo> GetShaderCompilationInfoAsync(int moduleId, CancellationToken ct = default)
+        => _js.InvokeAsync<Core.ShaderCompilationInfo>("WgpuSharp.getShaderCompilationInfo", ct, moduleId);
+
     // Buffer
     public ValueTask<int> CreateBufferAsync(int deviceId, long size, int usage, bool mappedAtCreation = false, CancellationToken ct = default)
         => _js.InvokeAsync<int>("WgpuSharp.createBuffer", ct, deviceId, size, usage, mappedAtCreation);

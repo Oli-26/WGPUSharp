@@ -64,7 +64,36 @@ window.WgpuSharp = {
     async requestDevice(adapterId) {
         const adapter = get(adapterId);
         const device = await adapter.requestDevice();
+        // Track device lost
+        device.lost.then(info => {
+            console.error("WgpuSharp: GPU device lost —", info.message, "(reason:", info.reason + ")");
+        });
         return store(device);
+    },
+
+    // Shader compilation with error details
+    createShaderModuleWithErrors(deviceId, wgslCode) {
+        const device = get(deviceId);
+        const module = device.createShaderModule({ code: wgslCode });
+        // getCompilationInfo is async but module is usable immediately.
+        // We return the handle and let C# check compilation separately.
+        return store(module);
+    },
+
+    async getShaderCompilationInfo(moduleId) {
+        const module = get(moduleId);
+        if (!module.getCompilationInfo) return { messages: [] };
+        const info = await module.getCompilationInfo();
+        return {
+            messages: info.messages.map(m => ({
+                type: m.type,        // "error", "warning", "info"
+                message: m.message,
+                lineNum: m.lineNum,
+                linePos: m.linePos,
+                offset: m.offset,
+                length: m.length,
+            })),
+        };
     },
 
     // Canvas context
