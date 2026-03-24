@@ -67,9 +67,14 @@ public sealed class RenderPipelineDescriptor
             }).ToArray(),
             fragmentModuleId = Fragment.Module.Handle,
             fragmentEntryPoint = Fragment.EntryPoint,
-            colorTargets = Fragment.Targets.Select(t => new
+            colorTargets = Fragment.Targets.Select(t =>
             {
-                format = t.Format.ToJsString(),
+                object? blend = t.Blend?.ToJsObject();
+                return new
+                {
+                    format = t.Format.ToJsString(),
+                    blend,
+                };
             }).ToArray(),
             primitiveTopology = PrimitiveTopology.ToJsString(),
             cullMode = CullMode.ToJsString(),
@@ -92,9 +97,60 @@ public sealed class FragmentState
     public required ColorTargetState[] Targets { get; init; }
 }
 
+/// <summary>Describes one color attachment of a render pipeline.</summary>
 public sealed class ColorTargetState
 {
+    /// <summary>The texture format of this color target.</summary>
     public required TextureFormat Format { get; init; }
+    /// <summary>Optional blend state for alpha blending. Null = opaque (no blending).</summary>
+    public BlendState? Blend { get; init; }
+}
+
+/// <summary>
+/// Blend state for a color target. Use <see cref="BlendState.AlphaBlend"/> or
+/// <see cref="BlendState.PremultipliedAlpha"/> for common presets.
+/// </summary>
+public sealed class BlendState
+{
+    /// <summary>Blend component for the RGB channels.</summary>
+    public required BlendComponent Color { get; init; }
+    /// <summary>Blend component for the alpha channel.</summary>
+    public required BlendComponent Alpha { get; init; }
+
+    /// <summary>Standard alpha blending: srcColor * srcAlpha + dstColor * (1 - srcAlpha).</summary>
+    public static BlendState AlphaBlend => new()
+    {
+        Color = new() { SrcFactor = BlendFactor.SrcAlpha, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add },
+        Alpha = new() { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add },
+    };
+
+    /// <summary>Premultiplied alpha blending: srcColor + dstColor * (1 - srcAlpha).</summary>
+    public static BlendState PremultipliedAlpha => new()
+    {
+        Color = new() { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add },
+        Alpha = new() { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add },
+    };
+
+    /// <summary>Additive blending: srcColor + dstColor.</summary>
+    public static BlendState Additive => new()
+    {
+        Color = new() { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.One, Operation = BlendOperation.Add },
+        Alpha = new() { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.One, Operation = BlendOperation.Add },
+    };
+
+    internal object ToJsObject() => new
+    {
+        color = new { srcFactor = Color.SrcFactor.ToJsString(), dstFactor = Color.DstFactor.ToJsString(), operation = Color.Operation.ToJsString() },
+        alpha = new { srcFactor = Alpha.SrcFactor.ToJsString(), dstFactor = Alpha.DstFactor.ToJsString(), operation = Alpha.Operation.ToJsString() },
+    };
+}
+
+/// <summary>Describes how one blend component (color or alpha) is calculated.</summary>
+public sealed class BlendComponent
+{
+    public BlendFactor SrcFactor { get; init; } = BlendFactor.One;
+    public BlendFactor DstFactor { get; init; } = BlendFactor.Zero;
+    public BlendOperation Operation { get; init; } = BlendOperation.Add;
 }
 
 public sealed class VertexBufferLayout

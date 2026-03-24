@@ -73,6 +73,22 @@ public enum VertexFormat
     Sint32, Sint32x2, Sint32x3, Sint32x4,
 }
 
+public enum BlendFactor
+{
+    Zero, One,
+    Src, OneMinusSrc,
+    SrcAlpha, OneMinusSrcAlpha,
+    Dst, OneMinusDst,
+    DstAlpha, OneMinusDstAlpha,
+    SrcAlphaSaturated,
+    Constant, OneMinusConstant,
+}
+
+public enum BlendOperation
+{
+    Add, Subtract, ReverseSubtract, Min, Max,
+}
+
 public static class WebGpuEnumExtensions
 {
     public static string ToJsString(this TextureFormat format) => format switch
@@ -202,5 +218,33 @@ public static class WebGpuEnumExtensions
         VertexFormat.Sint32x3 => "sint32x3",
         VertexFormat.Sint32x4 => "sint32x4",
         _ => "float32x4",
+    };
+
+    public static string ToJsString(this BlendFactor f) => f switch
+    {
+        BlendFactor.Zero => "zero",
+        BlendFactor.One => "one",
+        BlendFactor.Src => "src",
+        BlendFactor.OneMinusSrc => "one-minus-src",
+        BlendFactor.SrcAlpha => "src-alpha",
+        BlendFactor.OneMinusSrcAlpha => "one-minus-src-alpha",
+        BlendFactor.Dst => "dst",
+        BlendFactor.OneMinusDst => "one-minus-dst",
+        BlendFactor.DstAlpha => "dst-alpha",
+        BlendFactor.OneMinusDstAlpha => "one-minus-dst-alpha",
+        BlendFactor.SrcAlphaSaturated => "src-alpha-saturated",
+        BlendFactor.Constant => "constant",
+        BlendFactor.OneMinusConstant => "one-minus-constant",
+        _ => "one",
+    };
+
+    public static string ToJsString(this BlendOperation op) => op switch
+    {
+        BlendOperation.Add => "add",
+        BlendOperation.Subtract => "subtract",
+        BlendOperation.ReverseSubtract => "reverse-subtract",
+        BlendOperation.Min => "min",
+        BlendOperation.Max => "max",
+        _ => "add",
     };
 }

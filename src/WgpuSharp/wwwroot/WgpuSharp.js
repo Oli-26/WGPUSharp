@@ -336,9 +336,11 @@ window.WgpuSharp = {
             fragment: {
                 module: get(descriptor.fragmentModuleId),
                 entryPoint: descriptor.fragmentEntryPoint,
-                targets: descriptor.colorTargets.map(t => ({
-                    format: t.format,
-                })),
+                targets: descriptor.colorTargets.map(t => {
+                    const target = { format: t.format };
+                    if (t.blend) { target.blend = t.blend; }
+                    return target;
+                }),
             },
             primitive: {
                 topology: descriptor.primitiveTopology || "triangle-list",
