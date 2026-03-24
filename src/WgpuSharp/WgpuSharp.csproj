@@ -9,7 +9,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>WgpuSharp</PackageId>
-    <Version>0.1.0-alpha</Version>
+    <Version>0.2.0-alpha</Version>
     <Title>WgpuSharp — WebGPU for Blazor WASM</Title>
     <Description>A clean, idiomatic C# binding layer for the browser WebGPU API via Blazor WebAssembly. Supports rendering, compute shaders, mesh loading (OBJ/GLB/STL), materials, input handling, and batched command execution.</Description>
     <Authors>WgpuSharp Contributors</Authors>
