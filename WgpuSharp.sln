@@ -9,6 +9,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WgpuSharp", "src\WgpuSharp\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WgpuSharp.Demo", "src\WgpuSharp.Demo\WgpuSharp.Demo.csproj", "{8476066A-FE7E-40F0-BBF1-22EC1942848E}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{DD99F4D3-8879-4ABA-9B20-789071E32E45}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WgpuSharp.Tests", "tests\WgpuSharp.Tests\WgpuSharp.Tests.csproj", "{9133B158-7890-4843-8435-425D19159380}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,9 +30,14 @@ Global
 		{8476066A-FE7E-40F0-BBF1-22EC1942848E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8476066A-FE7E-40F0-BBF1-22EC1942848E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8476066A-FE7E-40F0-BBF1-22EC1942848E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9133B158-7890-4843-8435-425D19159380}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9133B158-7890-4843-8435-425D19159380}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9133B158-7890-4843-8435-425D19159380}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9133B158-7890-4843-8435-425D19159380}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{9628E0DF-7AA5-436E-85A3-9A496121249B} = {EE1F9DA5-4C9A-4FA1-9524-6E8D47A0A9FD}
 		{8476066A-FE7E-40F0-BBF1-22EC1942848E} = {EE1F9DA5-4C9A-4FA1-9524-6E8D47A0A9FD}
+		{9133B158-7890-4843-8435-425D19159380} = {DD99F4D3-8879-4ABA-9B20-789071E32E45}
 	EndGlobalSection
 EndGlobal
