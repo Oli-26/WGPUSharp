@@ -21,7 +21,7 @@
     <p><strong>@_fps.ToString("F0") FPS</strong> | Objects: @ObjectCount | Press Esc to release mouse</p>
 }
 
-<canvas id="gpu-canvas" width="800" height="600" style="border: 1px solid #333; display: block; cursor: crosshair;"></canvas>
+<canvas id="gpu-canvas" width="800" height="600" style="border: 1px solid #333; display: block; cursor: crosshair; width: 100%; max-width: 1000px;"></canvas>
 
 @code {
     private string? _error;
@@ -233,6 +233,14 @@ fn fs_main(@location(0) normal: vec3f, @location(1) color: vec3f) -> @location(0
                 _fps = frame.Fps;
                 float dt = frame.DeltaTime;
 
+                // Handle canvas resize
+                if (await canvas.ResizeToDisplaySizeAsync())
+                {
+                    if (depthTexture is not null) await depthTexture.DisposeAsync();
+                    depthTexture = await canvas.CreateDepthTextureAsync(device);
+                    depthView = await depthTexture.CreateViewAsync();
+                }
+
                 // Poll input
                 var input = await _input!.GetStateAsync();
 
@@ -264,9 +272,9 @@ fn fs_main(@location(0) normal: vec3f, @location(1) color: vec3f) -> @location(0
                 if (input.IsKeyDown("Space")) camPos += up * speed;
                 if (input.IsKeyDown("ShiftLeft") || input.IsKeyDown("ShiftRight")) camPos -= up * speed;
 
-                // View-projection
+                // View-projection (uses current canvas aspect ratio)
                 var view = Matrix4x4.CreateLookAt(camPos, camPos + forward, up);
-                var proj = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 3f, 800f / 600f, 0.1f, 500f);
+                var proj = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 3f, canvas.AspectRatio, 0.1f, 500f);
                 var vp = view * proj;
                 WriteMatrix(vp, uniformBytes, 0);
 

@@ -29,6 +29,9 @@ internal sealed class JsBridge
     public ValueTask<CanvasSize> GetCanvasSizeAsync(string canvasId, CancellationToken ct = default)
         => _js.InvokeAsync<CanvasSize>("WgpuSharp.getCanvasSize", ct, canvasId);
 
+    public ValueTask<CanvasSize> GetCanvasDisplaySizeAsync(string canvasId, CancellationToken ct = default)
+        => _js.InvokeAsync<CanvasSize>("WgpuSharp.getCanvasDisplaySize", ct, canvasId);
+
     public ValueTask SetCanvasSizeAsync(string canvasId, int width, int height, CancellationToken ct = default)
         => _js.InvokeVoidAsync("WgpuSharp.setCanvasSize", ct, canvasId, width, height);
 

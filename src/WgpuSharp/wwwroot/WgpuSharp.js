@@ -92,6 +92,14 @@ window.WgpuSharp = {
         return { width: canvas.width, height: canvas.height };
     },
 
+    getCanvasDisplaySize(canvasId) {
+        const canvas = document.getElementById(canvasId);
+        return {
+            width: Math.round(canvas.clientWidth * (window.devicePixelRatio || 1)),
+            height: Math.round(canvas.clientHeight * (window.devicePixelRatio || 1)),
+        };
+    },
+
     setCanvasSize(canvasId, width, height) {
         const canvas = document.getElementById(canvasId);
         canvas.width = width;
