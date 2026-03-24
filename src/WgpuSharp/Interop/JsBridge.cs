@@ -11,9 +11,22 @@ internal sealed class JsBridge
         _js = js;
     }
 
+    // Availability
+    public ValueTask<bool> IsWebGpuSupportedAsync(CancellationToken ct = default)
+        => _js.InvokeAsync<bool>("WgpuSharp.isWebGpuSupported", ct);
+
     // Adapter
     public ValueTask<int> RequestAdapterAsync(CancellationToken ct = default)
         => _js.InvokeAsync<int>("WgpuSharp.requestAdapter", ct);
+
+    public ValueTask<Core.GpuAdapterInfo> GetAdapterInfoAsync(int adapterId, CancellationToken ct = default)
+        => _js.InvokeAsync<Core.GpuAdapterInfo>("WgpuSharp.getAdapterInfo", ct, adapterId);
+
+    public ValueTask<string[]> GetAdapterFeaturesAsync(int adapterId, CancellationToken ct = default)
+        => _js.InvokeAsync<string[]>("WgpuSharp.getAdapterFeatures", ct, adapterId);
+
+    public ValueTask<Core.GpuAdapterLimits> GetAdapterLimitsAsync(int adapterId, CancellationToken ct = default)
+        => _js.InvokeAsync<Core.GpuAdapterLimits>("WgpuSharp.getAdapterLimits", ct, adapterId);
 
     // Device
     public ValueTask<int> RequestDeviceAsync(int adapterId, CancellationToken ct = default)

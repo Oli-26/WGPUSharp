@@ -48,6 +48,11 @@ const inputState = {
 };
 
 window.WgpuSharp = {
+    // Availability check
+    isWebGpuSupported() {
+        return !!navigator.gpu;
+    },
+
     // Adapter
     async requestAdapter() {
         if (!navigator.gpu) {
@@ -58,6 +63,42 @@ window.WgpuSharp = {
             throw new Error("Failed to get GPU adapter. On Linux, enable WebGPU via chrome://flags/#enable-unsafe-webgpu or launch with: --enable-features=Vulkan --enable-unsafe-webgpu");
         }
         return store(adapter);
+    },
+
+    async getAdapterInfo(adapterId) {
+        const adapter = get(adapterId);
+        // requestAdapterInfo may require user gesture in some browsers
+        try {
+            const info = await adapter.requestAdapterInfo();
+            return {
+                vendor: info.vendor || "",
+                architecture: info.architecture || "",
+                device: info.device || "",
+                description: info.description || "",
+            };
+        } catch (_) {
+            return { vendor: "", architecture: "", device: "", description: "" };
+        }
+    },
+
+    getAdapterFeatures(adapterId) {
+        const adapter = get(adapterId);
+        return Array.from(adapter.features || []);
+    },
+
+    getAdapterLimits(adapterId) {
+        const adapter = get(adapterId);
+        const l = adapter.limits;
+        return {
+            maxTextureDimension2D: l.maxTextureDimension2D,
+            maxTextureArrayLayers: l.maxTextureArrayLayers,
+            maxBindGroups: l.maxBindGroups,
+            maxBufferSize: l.maxBufferSize,
+            maxVertexBuffers: l.maxVertexBuffers,
+            maxComputeWorkgroupSizeX: l.maxComputeWorkgroupSizeX,
+            maxComputeWorkgroupSizeY: l.maxComputeWorkgroupSizeY,
+            maxComputeWorkgroupSizeZ: l.maxComputeWorkgroupSizeZ,
+        };
     },
 
     // Device
