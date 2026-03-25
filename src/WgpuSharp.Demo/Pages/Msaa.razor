@@ -1,0 +1,161 @@
+@page "/msaa"
+@using WgpuSharp.Core
+@using WgpuSharp.Commands
+@using WgpuSharp.Pipeline
+@using WgpuSharp.Resources
+@inject IJSRuntime JS
+
+<PageTitle>WgpuSharp — MSAA Demo</PageTitle>
+
+<h3>MSAA Demo</h3>
+<p>4x multisample anti-aliasing — compare smooth edges vs aliased triangle</p>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+else if (!_ready)
+{
+    <p>Initialising WebGPU...</p>
+}
+
+<div style="display: flex; gap: 16px; flex-wrap: wrap;">
+    <div>
+        <p style="margin-bottom: 4px; color: #a6e3a1;">4x MSAA</p>
+        <canvas id="msaa-canvas" width="400" height="300" style="border: 1px solid #333; display: block;"></canvas>
+    </div>
+    <div>
+        <p style="margin-bottom: 4px; color: #888;">No MSAA</p>
+        <canvas id="nomsaa-canvas" width="400" height="300" style="border: 1px solid #333; display: block;"></canvas>
+    </div>
+</div>
+
+@code {
+    private bool _ready;
+    private string? _error;
+
+    private const string ShaderSource = @"
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) color: vec3f,
+};
+
+@vertex
+fn vs_main(@location(0) position: vec2f, @location(1) color: vec3f) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = vec4f(position, 0.0, 1.0);
+    output.color = color;
+    return output;
+}
+
+@fragment
+fn fs_main(@location(0) color: vec3f) -> @location(0) vec4f {
+    return vec4f(color, 1.0);
+}
+";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            var device = await adapter.RequestDeviceAsync();
+
+            float[] vertices =
+            [
+                 0.0f,  0.7f,  1.0f, 0.2f, 0.3f,
+                -0.7f, -0.5f,  0.2f, 1.0f, 0.3f,
+                 0.7f, -0.5f,  0.2f, 0.3f, 1.0f,
+            ];
+
+            var vertexBuffer = await device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = vertices.Length * sizeof(float),
+                Usage = BufferUsage.Vertex | BufferUsage.CopyDest,
+            });
+            await vertexBuffer.WriteAsync(vertices);
+
+            var shader = await device.CreateShaderModuleAsync(ShaderSource);
+
+            // Render MSAA canvas
+            var msaaCanvas = await GpuCanvas.ConfigureAsync(device, "msaa-canvas");
+            var msaaTexture = await msaaCanvas.CreateMsaaTextureAsync(device, 4);
+            var msaaView = await msaaTexture.CreateViewAsync();
+
+            var msaaPipeline = await device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState
+                {
+                    Module = shader, EntryPoint = "vs_main",
+                    Buffers = [new VertexBufferLayout
+                    {
+                        ArrayStride = 5 * sizeof(float),
+                        Attributes =
+                        [
+                            new VertexAttribute { ShaderLocation = 0, Offset = 0, Format = VertexFormat.Float32x2 },
+                            new VertexAttribute { ShaderLocation = 1, Offset = 2 * sizeof(float), Format = VertexFormat.Float32x3 },
+                        ],
+                    }],
+                },
+                Fragment = new FragmentState
+                {
+                    Module = shader, EntryPoint = "fs_main",
+                    Targets = [new ColorTargetState { Format = msaaCanvas.Format }],
+                },
+                Multisample = new MultisampleState { Count = 4 },
+            });
+
+            var batch = new RenderBatch(device);
+            var resolveView = batch.GetCurrentTextureView(msaaCanvas);
+            var pass = batch.BeginRenderPass(msaaView, resolveView, new GpuColor(0.1, 0.1, 0.12, 1.0));
+            pass.SetPipeline(msaaPipeline);
+            pass.SetVertexBuffer(0, vertexBuffer);
+            pass.Draw(3);
+            pass.EndAndSubmit();
+            await batch.FlushAsync();
+
+            // Render non-MSAA canvas
+            var noMsaaCanvas = await GpuCanvas.ConfigureAsync(device, "nomsaa-canvas");
+            var noMsaaPipeline = await device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState
+                {
+                    Module = shader, EntryPoint = "vs_main",
+                    Buffers = [new VertexBufferLayout
+                    {
+                        ArrayStride = 5 * sizeof(float),
+                        Attributes =
+                        [
+                            new VertexAttribute { ShaderLocation = 0, Offset = 0, Format = VertexFormat.Float32x2 },
+                            new VertexAttribute { ShaderLocation = 1, Offset = 2 * sizeof(float), Format = VertexFormat.Float32x3 },
+                        ],
+                    }],
+                },
+                Fragment = new FragmentState
+                {
+                    Module = shader, EntryPoint = "fs_main",
+                    Targets = [new ColorTargetState { Format = noMsaaCanvas.Format }],
+                },
+            });
+
+            var batch2 = new RenderBatch(device);
+            var view2 = batch2.GetCurrentTextureView(noMsaaCanvas);
+            var pass2 = batch2.BeginRenderPass(view2, new GpuColor(0.1, 0.1, 0.12, 1.0));
+            pass2.SetPipeline(noMsaaPipeline);
+            pass2.SetVertexBuffer(0, vertexBuffer);
+            pass2.Draw(3);
+            pass2.EndAndSubmit();
+            await batch2.FlushAsync();
+
+            _ready = true;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+}

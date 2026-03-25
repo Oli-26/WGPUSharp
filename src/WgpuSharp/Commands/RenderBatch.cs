@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using WgpuSharp.Core;
 using WgpuSharp.Interop;
 using WgpuSharp.Pipeline;
@@ -33,6 +34,22 @@ public sealed class RenderBatch
     public void WriteBuffer(GpuBuffer buffer, float[] data)
     {
         _batch.WriteBuffer(_device.Handle, buffer.Handle, data);
+    }
+
+    /// <summary>
+    /// Write an array of unmanaged structs to a buffer (queued, executes with the batch).
+    /// </summary>
+    public void WriteBuffer<T>(GpuBuffer buffer, T[] data) where T : unmanaged
+    {
+        _batch.WriteBuffer(_device.Handle, buffer.Handle, BufferDataHelper.ToBytes(data));
+    }
+
+    /// <summary>
+    /// Write a single unmanaged struct to a buffer (queued, executes with the batch).
+    /// </summary>
+    public void WriteBuffer<T>(GpuBuffer buffer, T value) where T : unmanaged
+    {
+        _batch.WriteBuffer(_device.Handle, buffer.Handle, BufferDataHelper.ToBytes(value));
     }
 
     /// <summary>
@@ -116,7 +133,32 @@ public sealed class RenderBatch
         return new BatchedEncoder(_batch, _device.Handle, encoderRef);
     }
 
-    internal static object[] BuildColorAttachments(int viewRef, GpuColor clearColor, LoadOp loadOp, StoreOp storeOp)
+    /// <summary>
+    /// Begin an MSAA render pass: render into the multisample texture, resolve to the canvas.
+    /// </summary>
+    /// <param name="msaaView">The multisample texture view to render into (created from a 4x sample texture).</param>
+    /// <param name="resolveTarget">The canvas texture view (from <see cref="GetCurrentTextureView"/>) to resolve the MSAA result into.</param>
+    /// <param name="clearColor">The color to clear to.</param>
+    /// <param name="depthView">Optional depth buffer view (must also be multisample if used).</param>
+    /// <param name="colorLoadOp">How to initialize the color attachment. Default: Clear.</param>
+    /// <param name="colorStoreOp">What to do with the color attachment after the pass. Default: Store.</param>
+    /// <param name="depthLoadOp">How to initialize the depth attachment. Default: Clear.</param>
+    /// <param name="depthStoreOp">What to do with the depth attachment after the pass. Default: Store.</param>
+    public BatchedRenderPass BeginRenderPass(GpuTextureView msaaView, BatchedTextureView resolveTarget, GpuColor clearColor,
+        GpuTextureView? depthView = null,
+        LoadOp colorLoadOp = LoadOp.Clear, StoreOp colorStoreOp = StoreOp.Store,
+        LoadOp depthLoadOp = LoadOp.Clear, StoreOp depthStoreOp = StoreOp.Store)
+    {
+        int encoderRef = _batch.CreateCommandEncoder(_device.Handle);
+
+        var colorAttachments = BuildColorAttachments(msaaView.Handle, clearColor, colorLoadOp, colorStoreOp, resolveTarget.Ref);
+        var depthAttachment = BuildDepthAttachment(depthView, depthLoadOp, depthStoreOp);
+
+        int passRef = _batch.BeginRenderPass(encoderRef, colorAttachments, depthAttachment);
+        return new BatchedRenderPass(_batch, _device.Handle, encoderRef, passRef);
+    }
+
+    internal static object[] BuildColorAttachments(int viewRef, GpuColor clearColor, LoadOp loadOp, StoreOp storeOp, int? resolveTargetRef = null)
     {
         return
         [
@@ -126,6 +168,7 @@ public sealed class RenderBatch
                 clearValue = new { r = clearColor.R, g = clearColor.G, b = clearColor.B, a = clearColor.A },
                 loadOp = loadOp.ToJsString(),
                 storeOp = storeOp.ToJsString(),
+                resolveTargetId = resolveTargetRef,
             }
         ];
     }
@@ -194,6 +237,14 @@ public sealed class BatchedRenderPass
 
     public void DrawIndexed(int indexCount, int instanceCount = 1, int firstIndex = 0, int baseVertex = 0, int firstInstance = 0) =>
         _batch.DrawIndexed(_passRef, indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+
+    /// <summary>Draws primitives using parameters read from a GPU buffer.</summary>
+    public void DrawIndirect(GpuBuffer indirectBuffer, long indirectOffset = 0) =>
+        _batch.DrawIndirect(_passRef, indirectBuffer.Handle, indirectOffset);
+
+    /// <summary>Draws indexed primitives using parameters read from a GPU buffer.</summary>
+    public void DrawIndexedIndirect(GpuBuffer indirectBuffer, long indirectOffset = 0) =>
+        _batch.DrawIndexedIndirect(_passRef, indirectBuffer.Handle, indirectOffset);
 
     /// <summary>End the pass only (use with BatchedEncoder for multi-pass).</summary>
     public void End() => _batch.EndPass(_passRef);
@@ -287,6 +338,19 @@ public sealed class BatchedEncoder
         LoadOp depthLoadOp = LoadOp.Clear, StoreOp depthStoreOp = StoreOp.Store)
     {
         var colorAttachments = RenderBatch.BuildColorAttachments(colorView.Handle, clearColor, colorLoadOp, colorStoreOp);
+        var depthAttachment = RenderBatch.BuildDepthAttachment(depthView, depthLoadOp, depthStoreOp);
+
+        int passRef = _batch.BeginRenderPass(_encoderRef, colorAttachments, depthAttachment);
+        return new BatchedRenderPass(_batch, _deviceHandle, _encoderRef, passRef);
+    }
+
+    /// <summary>Begin an MSAA render pass on this encoder.</summary>
+    public BatchedRenderPass BeginRenderPass(GpuTextureView msaaView, BatchedTextureView resolveTarget, GpuColor clearColor,
+        GpuTextureView? depthView = null,
+        LoadOp colorLoadOp = LoadOp.Clear, StoreOp colorStoreOp = StoreOp.Store,
+        LoadOp depthLoadOp = LoadOp.Clear, StoreOp depthStoreOp = StoreOp.Store)
+    {
+        var colorAttachments = RenderBatch.BuildColorAttachments(msaaView.Handle, clearColor, colorLoadOp, colorStoreOp, resolveTarget.Ref);
         var depthAttachment = RenderBatch.BuildDepthAttachment(depthView, depthLoadOp, depthStoreOp);
 
         int passRef = _batch.BeginRenderPass(_encoderRef, colorAttachments, depthAttachment);

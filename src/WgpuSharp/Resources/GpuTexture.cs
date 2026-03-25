@@ -56,22 +56,32 @@ public sealed class GpuTextureView : IAsyncDisposable
     }
 }
 
+/// <summary>Flags indicating how a texture may be used.</summary>
 [Flags]
 public enum TextureUsage
 {
+    /// <summary>Texture can be used as the source of a copy operation.</summary>
     CopySource = 0x01,
+    /// <summary>Texture can be used as the destination of a copy or write operation.</summary>
     CopyDest = 0x02,
+    /// <summary>Texture can be used as a sampled texture in a shader.</summary>
     TextureBinding = 0x04,
+    /// <summary>Texture can be used as a storage texture in a shader.</summary>
     StorageBinding = 0x08,
+    /// <summary>Texture can be used as a render attachment (color or depth/stencil).</summary>
     RenderAttachment = 0x10,
 }
 
 /// <summary>Describes a GPU texture to create.</summary>
 public sealed class TextureDescriptor
 {
+    /// <summary>Texture dimensions as [width, height] or [width, height, depth].</summary>
     public required int[] Size { get; init; }
+    /// <summary>The texel format of the texture.</summary>
     public required TextureFormat Format { get; init; }
+    /// <summary>How the texture will be used (combine flags with |).</summary>
     public required TextureUsage Usage { get; init; }
+    /// <summary>Number of samples per texel (1 for non-MSAA, 4 for typical MSAA).</summary>
     public int SampleCount { get; init; } = 1;
 
     internal object ToJsObject() => new

@@ -105,11 +105,17 @@ window.WgpuSharp = {
     async requestDevice(adapterId) {
         const adapter = get(adapterId);
         const device = await adapter.requestDevice();
-        // Track device lost
+        return store(device);
+    },
+
+    registerDeviceLostCallback(deviceId, dotNetRef) {
+        const device = get(deviceId);
         device.lost.then(info => {
             console.error("WgpuSharp: GPU device lost —", info.message, "(reason:", info.reason + ")");
+            try {
+                dotNetRef.invokeMethodAsync("OnDeviceLost", info.reason || "unknown", info.message || "");
+            } catch (_) {}
         });
-        return store(device);
     },
 
     // Shader compilation with error details
@@ -356,6 +362,12 @@ window.WgpuSharp = {
             };
         }
 
+        if (descriptor.multisample) {
+            pipelineDescriptor.multisample = {
+                count: descriptor.multisample.count,
+            };
+        }
+
         const pipeline = device.createRenderPipeline(pipelineDescriptor);
         return store(pipeline);
     },
@@ -370,12 +382,18 @@ window.WgpuSharp = {
     beginRenderPass(encoderId, descriptor) {
         const encoder = get(encoderId);
 
-        const colorAttachments = descriptor.colorAttachments.map(a => ({
-            view: get(a.viewId),
-            clearValue: a.clearValue,
-            loadOp: a.loadOp,
-            storeOp: a.storeOp,
-        }));
+        const colorAttachments = descriptor.colorAttachments.map(a => {
+            const attachment = {
+                view: get(a.viewId),
+                clearValue: a.clearValue,
+                loadOp: a.loadOp,
+                storeOp: a.storeOp,
+            };
+            if (a.resolveTargetId !== undefined && a.resolveTargetId !== null) {
+                attachment.resolveTarget = get(a.resolveTargetId);
+            }
+            return attachment;
+        });
 
         const passDescriptor = { colorAttachments };
 
@@ -416,6 +434,16 @@ window.WgpuSharp = {
     drawIndexed(passId, indexCount, instanceCount, firstIndex, baseVertex, firstInstance) {
         const pass = get(passId);
         pass.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+    },
+
+    drawIndirect(passId, indirectBufferId, indirectOffset) {
+        const pass = get(passId);
+        pass.drawIndirect(get(indirectBufferId), indirectOffset);
+    },
+
+    drawIndexedIndirect(passId, indirectBufferId, indirectOffset) {
+        const pass = get(passId);
+        pass.drawIndexedIndirect(get(indirectBufferId), indirectOffset);
     },
 
     endPass(passId) {
@@ -585,12 +613,18 @@ window.WgpuSharp = {
                 }
                 case 3: { // beginRenderPass(encoderId, colorAttachments, depthAttachment)
                     const encoder = get(r(cmd[2]));
-                    const colorAttachments = cmd[3].map(a => ({
-                        view: get(r(a.viewId)),
-                        clearValue: a.clearValue,
-                        loadOp: a.loadOp,
-                        storeOp: a.storeOp,
-                    }));
+                    const colorAttachments = cmd[3].map(a => {
+                        const attachment = {
+                            view: get(r(a.viewId)),
+                            clearValue: a.clearValue,
+                            loadOp: a.loadOp,
+                            storeOp: a.storeOp,
+                        };
+                        if (a.resolveTargetId !== undefined && a.resolveTargetId !== null) {
+                            attachment.resolveTarget = get(r(a.resolveTargetId));
+                        }
+                        return attachment;
+                    });
                     const desc = { colorAttachments };
                     if (cmd[4]) {
                         desc.depthStencilAttachment = {
@@ -657,6 +691,14 @@ window.WgpuSharp = {
                 }
                 case 16: { // releaseHandle(id)
                     release(r(cmd[2]));
+                    break;
+                }
+                case 17: { // drawIndirect(passId, bufferId, offset)
+                    get(r(cmd[2])).drawIndirect(get(r(cmd[3])), cmd[4]);
+                    break;
+                }
+                case 18: { // drawIndexedIndirect(passId, bufferId, offset)
+                    get(r(cmd[2])).drawIndexedIndirect(get(r(cmd[3])), cmd[4]);
                     break;
                 }
             }

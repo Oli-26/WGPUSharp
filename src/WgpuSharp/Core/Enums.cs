@@ -1,92 +1,277 @@
 namespace WgpuSharp.Core;
 
+/// <summary>Pixel format of a texture.</summary>
 public enum TextureFormat
 {
     // 8-bit
-    R8Unorm, R8Snorm, R8Uint, R8Sint,
+
+    /// <summary>8-bit unsigned normalized red channel.</summary>
+    R8Unorm,
+    /// <summary>8-bit signed normalized red channel.</summary>
+    R8Snorm,
+    /// <summary>8-bit unsigned integer red channel.</summary>
+    R8Uint,
+    /// <summary>8-bit signed integer red channel.</summary>
+    R8Sint,
+
     // 16-bit
-    R16Uint, R16Sint, R16Float,
-    Rg8Unorm, Rg8Snorm, Rg8Uint, Rg8Sint,
+
+    /// <summary>16-bit unsigned integer red channel.</summary>
+    R16Uint,
+    /// <summary>16-bit signed integer red channel.</summary>
+    R16Sint,
+    /// <summary>16-bit float red channel.</summary>
+    R16Float,
+    /// <summary>Two 8-bit unsigned normalized channels (red, green).</summary>
+    Rg8Unorm,
+    /// <summary>Two 8-bit signed normalized channels (red, green).</summary>
+    Rg8Snorm,
+    /// <summary>Two 8-bit unsigned integer channels (red, green).</summary>
+    Rg8Uint,
+    /// <summary>Two 8-bit signed integer channels (red, green).</summary>
+    Rg8Sint,
+
     // 32-bit
-    R32Uint, R32Sint, R32Float,
-    Rg16Uint, Rg16Sint, Rg16Float,
-    Rgba8Unorm, Rgba8UnormSrgb, Rgba8Snorm, Rgba8Uint, Rgba8Sint,
-    Bgra8Unorm, Bgra8UnormSrgb,
+
+    /// <summary>32-bit unsigned integer red channel.</summary>
+    R32Uint,
+    /// <summary>32-bit signed integer red channel.</summary>
+    R32Sint,
+    /// <summary>32-bit float red channel.</summary>
+    R32Float,
+    /// <summary>Two 16-bit unsigned integer channels (red, green).</summary>
+    Rg16Uint,
+    /// <summary>Two 16-bit signed integer channels (red, green).</summary>
+    Rg16Sint,
+    /// <summary>Two 16-bit float channels (red, green).</summary>
+    Rg16Float,
+    /// <summary>Four 8-bit unsigned normalized channels (RGBA).</summary>
+    Rgba8Unorm,
+    /// <summary>Four 8-bit unsigned normalized channels (RGBA) with sRGB encoding.</summary>
+    Rgba8UnormSrgb,
+    /// <summary>Four 8-bit signed normalized channels (RGBA).</summary>
+    Rgba8Snorm,
+    /// <summary>Four 8-bit unsigned integer channels (RGBA).</summary>
+    Rgba8Uint,
+    /// <summary>Four 8-bit signed integer channels (RGBA).</summary>
+    Rgba8Sint,
+    /// <summary>Four 8-bit unsigned normalized channels in BGRA order.</summary>
+    Bgra8Unorm,
+    /// <summary>Four 8-bit unsigned normalized channels in BGRA order with sRGB encoding.</summary>
+    Bgra8UnormSrgb,
+
     // 64-bit
-    Rg32Uint, Rg32Sint, Rg32Float,
-    Rgba16Uint, Rgba16Sint, Rgba16Float,
+
+    /// <summary>Two 32-bit unsigned integer channels (red, green).</summary>
+    Rg32Uint,
+    /// <summary>Two 32-bit signed integer channels (red, green).</summary>
+    Rg32Sint,
+    /// <summary>Two 32-bit float channels (red, green).</summary>
+    Rg32Float,
+    /// <summary>Four 16-bit unsigned integer channels (RGBA).</summary>
+    Rgba16Uint,
+    /// <summary>Four 16-bit signed integer channels (RGBA).</summary>
+    Rgba16Sint,
+    /// <summary>Four 16-bit float channels (RGBA).</summary>
+    Rgba16Float,
+
     // 128-bit
-    Rgba32Uint, Rgba32Sint, Rgba32Float,
+
+    /// <summary>Four 32-bit unsigned integer channels (RGBA).</summary>
+    Rgba32Uint,
+    /// <summary>Four 32-bit signed integer channels (RGBA).</summary>
+    Rgba32Sint,
+    /// <summary>Four 32-bit float channels (RGBA).</summary>
+    Rgba32Float,
+
     // Depth/stencil
-    Depth16Unorm, Depth24Plus, Depth24PlusStencil8, Depth32Float,
+
+    /// <summary>16-bit unsigned normalized depth.</summary>
+    Depth16Unorm,
+    /// <summary>24-bit depth in an implementation-defined format.</summary>
+    Depth24Plus,
+    /// <summary>24-bit depth plus 8-bit stencil.</summary>
+    Depth24PlusStencil8,
+    /// <summary>32-bit float depth.</summary>
+    Depth32Float,
 }
 
+/// <summary>Operation to perform on a render target at the start of a render pass.</summary>
 public enum LoadOp
 {
+    /// <summary>Clear the render target to a specified value.</summary>
     Clear,
+    /// <summary>Preserve the existing contents of the render target.</summary>
     Load,
 }
 
+/// <summary>Operation to perform on a render target at the end of a render pass.</summary>
 public enum StoreOp
 {
+    /// <summary>Store the resulting value to the render target.</summary>
     Store,
+    /// <summary>Discard the resulting value; contents become undefined.</summary>
     Discard,
 }
 
+/// <summary>Comparison function used for depth and stencil testing.</summary>
 public enum CompareFunction
 {
+    /// <summary>Comparison always fails.</summary>
     Never,
+    /// <summary>Passes if the new value is less than the existing value.</summary>
     Less,
+    /// <summary>Passes if the new value is equal to the existing value.</summary>
     Equal,
+    /// <summary>Passes if the new value is less than or equal to the existing value.</summary>
     LessEqual,
+    /// <summary>Passes if the new value is greater than the existing value.</summary>
     Greater,
+    /// <summary>Passes if the new value is not equal to the existing value.</summary>
     NotEqual,
+    /// <summary>Passes if the new value is greater than or equal to the existing value.</summary>
     GreaterEqual,
+    /// <summary>Comparison always passes.</summary>
     Always,
 }
 
+/// <summary>Filtering mode for texture sampling.</summary>
 public enum FilterMode
 {
+    /// <summary>Returns the texel nearest to the sample point.</summary>
     Nearest,
+    /// <summary>Linearly interpolates between the nearest texels.</summary>
     Linear,
 }
 
+/// <summary>Addressing/wrapping mode for texture coordinates outside [0, 1].</summary>
 public enum AddressMode
 {
+    /// <summary>Clamp texture coordinates to the [0, 1] range.</summary>
     ClampToEdge,
+    /// <summary>Repeat texture coordinates by wrapping around.</summary>
     Repeat,
+    /// <summary>Repeat texture coordinates, mirroring on each repetition.</summary>
     MirrorRepeat,
 }
 
+/// <summary>Data format of a vertex attribute.</summary>
 public enum VertexFormat
 {
     // 8-bit
-    Uint8x2, Uint8x4, Sint8x2, Sint8x4,
-    Unorm8x2, Unorm8x4, Snorm8x2, Snorm8x4,
+
+    /// <summary>Two 8-bit unsigned integers.</summary>
+    Uint8x2,
+    /// <summary>Four 8-bit unsigned integers.</summary>
+    Uint8x4,
+    /// <summary>Two 8-bit signed integers.</summary>
+    Sint8x2,
+    /// <summary>Four 8-bit signed integers.</summary>
+    Sint8x4,
+    /// <summary>Two 8-bit unsigned normalized values.</summary>
+    Unorm8x2,
+    /// <summary>Four 8-bit unsigned normalized values.</summary>
+    Unorm8x4,
+    /// <summary>Two 8-bit signed normalized values.</summary>
+    Snorm8x2,
+    /// <summary>Four 8-bit signed normalized values.</summary>
+    Snorm8x4,
+
     // 16-bit
-    Uint16x2, Uint16x4, Sint16x2, Sint16x4,
-    Unorm16x2, Unorm16x4, Snorm16x2, Snorm16x4,
-    Float16x2, Float16x4,
+
+    /// <summary>Two 16-bit unsigned integers.</summary>
+    Uint16x2,
+    /// <summary>Four 16-bit unsigned integers.</summary>
+    Uint16x4,
+    /// <summary>Two 16-bit signed integers.</summary>
+    Sint16x2,
+    /// <summary>Four 16-bit signed integers.</summary>
+    Sint16x4,
+    /// <summary>Two 16-bit unsigned normalized values.</summary>
+    Unorm16x2,
+    /// <summary>Four 16-bit unsigned normalized values.</summary>
+    Unorm16x4,
+    /// <summary>Two 16-bit signed normalized values.</summary>
+    Snorm16x2,
+    /// <summary>Four 16-bit signed normalized values.</summary>
+    Snorm16x4,
+    /// <summary>Two 16-bit floats.</summary>
+    Float16x2,
+    /// <summary>Four 16-bit floats.</summary>
+    Float16x4,
+
     // 32-bit
-    Float32, Float32x2, Float32x3, Float32x4,
-    Uint32, Uint32x2, Uint32x3, Uint32x4,
-    Sint32, Sint32x2, Sint32x3, Sint32x4,
+
+    /// <summary>One 32-bit float.</summary>
+    Float32,
+    /// <summary>Two 32-bit floats.</summary>
+    Float32x2,
+    /// <summary>Three 32-bit floats.</summary>
+    Float32x3,
+    /// <summary>Four 32-bit floats.</summary>
+    Float32x4,
+    /// <summary>One 32-bit unsigned integer.</summary>
+    Uint32,
+    /// <summary>Two 32-bit unsigned integers.</summary>
+    Uint32x2,
+    /// <summary>Three 32-bit unsigned integers.</summary>
+    Uint32x3,
+    /// <summary>Four 32-bit unsigned integers.</summary>
+    Uint32x4,
+    /// <summary>One 32-bit signed integer.</summary>
+    Sint32,
+    /// <summary>Two 32-bit signed integers.</summary>
+    Sint32x2,
+    /// <summary>Three 32-bit signed integers.</summary>
+    Sint32x3,
+    /// <summary>Four 32-bit signed integers.</summary>
+    Sint32x4,
 }
 
+/// <summary>Factor used in blend equations for source or destination components.</summary>
 public enum BlendFactor
 {
-    Zero, One,
-    Src, OneMinusSrc,
-    SrcAlpha, OneMinusSrcAlpha,
-    Dst, OneMinusDst,
-    DstAlpha, OneMinusDstAlpha,
+    /// <summary>Factor is zero (0, 0, 0, 0).</summary>
+    Zero,
+    /// <summary>Factor is one (1, 1, 1, 1).</summary>
+    One,
+    /// <summary>Factor is the source color.</summary>
+    Src,
+    /// <summary>Factor is one minus the source color.</summary>
+    OneMinusSrc,
+    /// <summary>Factor is the source alpha.</summary>
+    SrcAlpha,
+    /// <summary>Factor is one minus the source alpha.</summary>
+    OneMinusSrcAlpha,
+    /// <summary>Factor is the destination color.</summary>
+    Dst,
+    /// <summary>Factor is one minus the destination color.</summary>
+    OneMinusDst,
+    /// <summary>Factor is the destination alpha.</summary>
+    DstAlpha,
+    /// <summary>Factor is one minus the destination alpha.</summary>
+    OneMinusDstAlpha,
+    /// <summary>Factor is the minimum of source alpha and one minus destination alpha.</summary>
     SrcAlphaSaturated,
-    Constant, OneMinusConstant,
+    /// <summary>Factor is a constant blend color.</summary>
+    Constant,
+    /// <summary>Factor is one minus the constant blend color.</summary>
+    OneMinusConstant,
 }
 
+/// <summary>Operation that combines source and destination blend components.</summary>
 public enum BlendOperation
 {
-    Add, Subtract, ReverseSubtract, Min, Max,
+    /// <summary>Source + destination.</summary>
+    Add,
+    /// <summary>Source - destination.</summary>
+    Subtract,
+    /// <summary>Destination - source.</summary>
+    ReverseSubtract,
+    /// <summary>Minimum of source and destination.</summary>
+    Min,
+    /// <summary>Maximum of source and destination.</summary>
+    Max,
 }
 
 public static class WebGpuEnumExtensions

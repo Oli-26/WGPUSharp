@@ -1,3 +1,4 @@
+using Microsoft.JSInterop;
 using WgpuSharp.Commands;
 using WgpuSharp.Interop;
 using WgpuSharp.Pipeline;
@@ -6,23 +7,62 @@ using WgpuSharp.Resources;
 namespace WgpuSharp.Core;
 
 /// <summary>
+/// Information about a GPU device loss event.
+/// </summary>
+/// <param name="Reason">The reason the device was lost (e.g. "destroyed", "unknown").</param>
+/// <param name="Message">A human-readable message describing why the device was lost.</param>
+public record DeviceLostInfo(string Reason, string Message);
+
+/// <summary>
 /// The main GPU device. Use this to create all GPU resources: buffers, textures,
 /// shader modules, pipelines, bind groups, and command encoders.
 /// Obtained via <see cref="GpuAdapter.RequestDeviceAsync"/>.
 /// </summary>
-public sealed class GpuDevice
+public sealed class GpuDevice : IAsyncDisposable
 {
     internal int Handle { get; }
     internal JsBridge Bridge { get; }
+    private DotNetObjectReference<GpuDevice>? _dotNetRef;
+    private bool _disposed;
 
     /// <summary>The command queue for this device. Used to submit command buffers.</summary>
     public GpuQueue Queue { get; }
+
+    /// <summary>
+    /// Raised when the GPU device is lost (e.g. due to driver crash, tab backgrounding, or explicit destruction).
+    /// Subscribe to this event to show recovery UI or clean up resources.
+    /// </summary>
+    public event Func<DeviceLostInfo, Task>? DeviceLost;
 
     internal GpuDevice(JsBridge bridge, int handle)
     {
         Bridge = bridge;
         Handle = handle;
         Queue = new GpuQueue(bridge, handle);
+    }
+
+    internal async Task RegisterDeviceLostCallbackAsync(CancellationToken ct = default)
+    {
+        _dotNetRef = DotNetObjectReference.Create(this);
+        await Bridge.RegisterDeviceLostCallbackAsync(Handle, _dotNetRef, ct);
+    }
+
+    /// <summary>Called from JS when the GPU device is lost. Do not call directly.</summary>
+    [JSInvokable]
+    public async Task OnDeviceLost(string reason, string message)
+    {
+        var handler = DeviceLost;
+        if (handler is not null)
+            await handler(new DeviceLostInfo(reason, message));
+    }
+
+    /// <summary>Disposes the device and releases the JS callback reference.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _dotNetRef?.Dispose();
+        await Bridge.DestroyHandleAsync(Handle);
     }
 
     /// <summary>

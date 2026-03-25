@@ -199,8 +199,8 @@ fn fs_main(@location(0) color: vec3f) -> @location(0) vec4f {
                 _fps = frame.Fps;
 
                 // Build MVP matrix
-                var model = Matrix4x4.CreateRotationY(totalTime) *
-                            Matrix4x4.CreateRotationX(totalTime * 0.7f);
+                var model = Matrix4x4.CreateRotationY(-totalTime) *
+                            Matrix4x4.CreateRotationX(-totalTime * 0.7f);
                 var view = Matrix4x4.CreateLookAt(
                     new Vector3(0, 0, 3),
                     Vector3.Zero,

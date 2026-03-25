@@ -24,7 +24,9 @@ public sealed class GpuAdapter
     public async Task<GpuDevice> RequestDeviceAsync(CancellationToken ct = default)
     {
         var handle = await Bridge.RequestDeviceAsync(Handle, ct);
-        return new GpuDevice(Bridge, handle);
+        var device = new GpuDevice(Bridge, handle);
+        await device.RegisterDeviceLostCallbackAsync(ct);
+        return device;
     }
 
     /// <summary>

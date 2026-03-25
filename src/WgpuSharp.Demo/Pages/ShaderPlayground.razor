@@ -1036,9 +1036,9 @@ fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
 fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
     // Zoom into an interesting region
     let zoom = 1.0 + globals.time * 0.3;
-    let target = vec2f(-0.7435, 0.1314);
+    let center = vec2f(-0.7435, 0.1314);
     let scale = 2.0 / pow(1.5, zoom);
-    let c = target + (uv - 0.5) * scale;
+    let c = center + (uv - 0.5) * scale;
 
     var z = vec2f(0.0);
     var i = 0u;

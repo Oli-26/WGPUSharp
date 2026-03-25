@@ -38,6 +38,8 @@ public sealed class RenderPipelineDescriptor
     public PrimitiveTopology PrimitiveTopology { get; init; } = PrimitiveTopology.TriangleList;
     public CullMode CullMode { get; init; } = CullMode.None;
     public DepthStencilState? DepthStencil { get; init; }
+    /// <summary>Multisample state for MSAA. Null uses the default (1 sample, no MSAA).</summary>
+    public MultisampleState? Multisample { get; init; }
 
     internal object ToJsObject()
     {
@@ -48,6 +50,10 @@ public sealed class RenderPipelineDescriptor
                 depthWriteEnabled = DepthStencil.DepthWriteEnabled,
                 depthCompare = DepthStencil.DepthCompare.ToJsString(),
             }
+            : null;
+
+        object? multisample = Multisample is not null
+            ? new { count = Multisample.Count }
             : null;
 
         return new
@@ -79,21 +85,37 @@ public sealed class RenderPipelineDescriptor
             primitiveTopology = PrimitiveTopology.ToJsString(),
             cullMode = CullMode.ToJsString(),
             depthStencil,
+            multisample,
         };
     }
 }
 
+/// <summary>Configures multisample anti-aliasing (MSAA) for a render pipeline.</summary>
+public sealed class MultisampleState
+{
+    /// <summary>Number of samples per pixel. Must be 1 or 4. Default: 4.</summary>
+    public int Count { get; init; } = 4;
+}
+
+/// <summary>Describes the vertex stage of a render pipeline.</summary>
 public sealed class VertexState
 {
+    /// <summary>The shader module containing the vertex entry point.</summary>
     public required GpuShaderModule Module { get; init; }
+    /// <summary>The name of the vertex shader entry point function.</summary>
     public required string EntryPoint { get; init; }
+    /// <summary>The vertex buffer layouts describing the vertex data, or null if no vertex buffers are used.</summary>
     public VertexBufferLayout[]? Buffers { get; init; }
 }
 
+/// <summary>Describes the fragment stage of a render pipeline.</summary>
 public sealed class FragmentState
 {
+    /// <summary>The shader module containing the fragment entry point.</summary>
     public required GpuShaderModule Module { get; init; }
+    /// <summary>The name of the fragment shader entry point function.</summary>
     public required string EntryPoint { get; init; }
+    /// <summary>The color target states for each render attachment.</summary>
     public required ColorTargetState[] Targets { get; init; }
 }
 
@@ -153,40 +175,72 @@ public sealed class BlendComponent
     public BlendOperation Operation { get; init; } = BlendOperation.Add;
 }
 
+/// <summary>Describes the layout of a single vertex buffer bound to a render pipeline.</summary>
 public sealed class VertexBufferLayout
 {
+    /// <summary>The stride in bytes between consecutive elements in the buffer.</summary>
     public required long ArrayStride { get; init; }
+    /// <summary>Whether the buffer steps per vertex or per instance.</summary>
     public VertexStepMode StepMode { get; init; } = VertexStepMode.Vertex;
+    /// <summary>The vertex attributes read from this buffer.</summary>
     public required VertexAttribute[] Attributes { get; init; }
 }
 
+/// <summary>Describes a single vertex attribute within a vertex buffer layout.</summary>
 public sealed class VertexAttribute
 {
+    /// <summary>The shader location index this attribute maps to.</summary>
     public required int ShaderLocation { get; init; }
+    /// <summary>The byte offset of this attribute relative to the start of the element.</summary>
     public required long Offset { get; init; }
+    /// <summary>The data format of this vertex attribute.</summary>
     public required VertexFormat Format { get; init; }
 }
 
+/// <summary>Describes the depth/stencil state for a render pipeline.</summary>
 public sealed class DepthStencilState
 {
+    /// <summary>The texture format of the depth/stencil attachment.</summary>
     public required TextureFormat Format { get; init; }
+    /// <summary>Whether depth values are written to the depth buffer.</summary>
     public bool DepthWriteEnabled { get; init; } = true;
+    /// <summary>The comparison function used for the depth test.</summary>
     public CompareFunction DepthCompare { get; init; } = CompareFunction.Less;
 }
 
+/// <summary>Specifies how vertices are assembled into primitives.</summary>
 public enum PrimitiveTopology
 {
-    PointList, LineList, LineStrip, TriangleList, TriangleStrip,
+    /// <summary>Each vertex is a separate point.</summary>
+    PointList,
+    /// <summary>Each pair of vertices forms a separate line segment.</summary>
+    LineList,
+    /// <summary>Vertices form a connected strip of line segments.</summary>
+    LineStrip,
+    /// <summary>Each group of three vertices forms a separate triangle.</summary>
+    TriangleList,
+    /// <summary>Vertices form a connected strip of triangles.</summary>
+    TriangleStrip,
 }
 
+/// <summary>Specifies whether a vertex buffer steps per vertex or per instance.</summary>
 public enum VertexStepMode
 {
-    Vertex, Instance,
+    /// <summary>The buffer advances once per vertex.</summary>
+    Vertex,
+    /// <summary>The buffer advances once per instance.</summary>
+    Instance,
 }
 
+/// <summary>Specifies which triangle faces are culled during rasterization.</summary>
 public enum CullMode
 {
-    None, Front, Back,
+    /// <summary>No faces are culled.</summary>
+    None,
+    /// <summary>Front-facing triangles are culled.</summary>
+    Front,
+    /// <summary>Back-facing triangles are culled.</summary>
+    Back,
 }
 
 public static class EnumExtensions

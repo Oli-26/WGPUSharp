@@ -230,11 +230,17 @@ public sealed class Mesh
     }
 }
 
+/// <summary>GPU buffers and layout produced by uploading a mesh to the GPU.</summary>
 public sealed class MeshBuffers
 {
+    /// <summary>The GPU buffer containing interleaved vertex data.</summary>
     public required GpuBuffer VertexBuffer { get; init; }
+    /// <summary>The GPU buffer containing index data, or null if the mesh has no indices.</summary>
     public GpuBuffer? IndexBuffer { get; init; }
+    /// <summary>The vertex buffer layout describing the interleaved format.</summary>
     public required VertexBufferLayout Layout { get; init; }
+    /// <summary>Number of vertices in the mesh.</summary>
     public int VertexCount { get; init; }
+    /// <summary>Number of indices in the mesh (0 if non-indexed).</summary>
     public int IndexCount { get; init; }
 }

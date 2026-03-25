@@ -144,6 +144,18 @@ internal sealed class CommandBatch
         _commands.Add([16, -1, idOrRef]);
     }
 
+    // Op 17: drawIndirect(passId, bufferId, offset)
+    public void DrawIndirect(int passIdOrRef, int bufferIdOrRef, long indirectOffset)
+    {
+        _commands.Add([17, -1, passIdOrRef, bufferIdOrRef, indirectOffset]);
+    }
+
+    // Op 18: drawIndexedIndirect(passId, bufferId, offset)
+    public void DrawIndexedIndirect(int passIdOrRef, int bufferIdOrRef, long indirectOffset)
+    {
+        _commands.Add([18, -1, passIdOrRef, bufferIdOrRef, indirectOffset]);
+    }
+
     public object[] GetCommands() => _commands.ToArray();
     public object[] GetBufferWrites() => _bufferWrites.Select(w => (object)w).ToArray();
     public bool HasBufferWrites => _bufferWrites.Count > 0;

@@ -32,6 +32,9 @@ internal sealed class JsBridge
     public ValueTask<int> RequestDeviceAsync(int adapterId, CancellationToken ct = default)
         => _js.InvokeAsync<int>("WgpuSharp.requestDevice", ct, adapterId);
 
+    public ValueTask RegisterDeviceLostCallbackAsync(int deviceId, object dotNetRef, CancellationToken ct = default)
+        => _js.InvokeVoidAsync("WgpuSharp.registerDeviceLostCallback", ct, deviceId, dotNetRef);
+
     // Canvas
     public ValueTask<int> ConfigureCanvasAsync(int deviceId, string canvasId, string format, CancellationToken ct = default)
         => _js.InvokeAsync<int>("WgpuSharp.configureCanvas", ct, deviceId, canvasId, format);
@@ -118,6 +121,12 @@ internal sealed class JsBridge
 
     public ValueTask DrawIndexedAsync(int passId, int indexCount, int instanceCount = 1, int firstIndex = 0, int baseVertex = 0, int firstInstance = 0, CancellationToken ct = default)
         => _js.InvokeVoidAsync("WgpuSharp.drawIndexed", ct, passId, indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+
+    public ValueTask DrawIndirectAsync(int passId, int bufferId, long indirectOffset, CancellationToken ct = default)
+        => _js.InvokeVoidAsync("WgpuSharp.drawIndirect", ct, passId, bufferId, indirectOffset);
+
+    public ValueTask DrawIndexedIndirectAsync(int passId, int bufferId, long indirectOffset, CancellationToken ct = default)
+        => _js.InvokeVoidAsync("WgpuSharp.drawIndexedIndirect", ct, passId, bufferId, indirectOffset);
 
     public ValueTask EndPassAsync(int passId, CancellationToken ct = default)
         => _js.InvokeVoidAsync("WgpuSharp.endPass", ct, passId);

@@ -1,3 +1,4 @@
+using WgpuSharp.Commands;
 using WgpuSharp.Interop;
 using WgpuSharp.Resources;
 
@@ -98,6 +99,43 @@ public sealed class GpuCanvas
 
         await SetSizeAsync(displaySize.Width, displaySize.Height, ct);
         return true;
+    }
+
+    /// <summary>
+    /// Creates a multisample texture matching the current canvas size and format.
+    /// Use with <see cref="Commands.RenderBatch.BeginRenderPass(GpuTextureView, BatchedTextureView, Commands.GpuColor, GpuTextureView?, LoadOp, StoreOp, LoadOp, StoreOp)"/>
+    /// for MSAA rendering.
+    /// </summary>
+    /// <param name="device">The GPU device.</param>
+    /// <param name="sampleCount">Number of samples per pixel. Typically 4.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<GpuTexture> CreateMsaaTextureAsync(GpuDevice device, int sampleCount = 4, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        return await device.CreateTextureAsync(new TextureDescriptor
+        {
+            Size = [Width, Height],
+            Format = Format,
+            Usage = TextureUsage.RenderAttachment,
+            SampleCount = sampleCount,
+        }, ct);
+    }
+
+    /// <summary>Creates a multisample depth texture matching the current canvas size.</summary>
+    /// <param name="device">The GPU device.</param>
+    /// <param name="sampleCount">Number of samples per pixel. Must match the MSAA color texture.</param>
+    /// <param name="depthFormat">Depth texture format. Default: Depth24Plus.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<GpuTexture> CreateMsaaDepthTextureAsync(GpuDevice device, int sampleCount = 4, TextureFormat depthFormat = TextureFormat.Depth24Plus, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        return await device.CreateTextureAsync(new TextureDescriptor
+        {
+            Size = [Width, Height],
+            Format = depthFormat,
+            Usage = TextureUsage.RenderAttachment,
+            SampleCount = sampleCount,
+        }, ct);
     }
 
     /// <summary>Creates a depth texture matching the current canvas size.</summary>

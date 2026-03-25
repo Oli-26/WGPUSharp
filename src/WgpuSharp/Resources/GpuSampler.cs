@@ -29,11 +29,16 @@ public sealed class GpuSampler : IAsyncDisposable
     }
 }
 
+/// <summary>Describes a texture sampler to create.</summary>
 public sealed class SamplerDescriptor
 {
+    /// <summary>Filtering mode when the texture is magnified.</summary>
     public FilterMode MagFilter { get; init; } = FilterMode.Linear;
+    /// <summary>Filtering mode when the texture is minified.</summary>
     public FilterMode MinFilter { get; init; } = FilterMode.Linear;
+    /// <summary>Texture address (wrap) mode for the U coordinate.</summary>
     public AddressMode AddressModeU { get; init; } = AddressMode.ClampToEdge;
+    /// <summary>Texture address (wrap) mode for the V coordinate.</summary>
     public AddressMode AddressModeV { get; init; } = AddressMode.ClampToEdge;
 
     internal object ToJsObject() => new

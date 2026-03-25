@@ -5,11 +5,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
 
     <!-- NuGet package metadata -->
     <PackageId>WgpuSharp</PackageId>
-    <Version>0.2.0-alpha</Version>
+    <Version>0.3.0-alpha</Version>
     <Title>WgpuSharp — WebGPU for Blazor WASM</Title>
     <Description>A clean, idiomatic C# binding layer for the browser WebGPU API via Blazor WebAssembly. Supports rendering, compute shaders, mesh loading (OBJ/GLB/STL), materials, input handling, and batched command execution.</Description>
     <Authors>WgpuSharp Contributors</Authors>
@@ -17,14 +16,26 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/Oli-26/WGPUSharp</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/Oli-26/WGPUSharp</PackageProjectUrl>
+    <PackageIcon>icon.png</PackageIcon>
+
+    <!-- Source Link -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="8.0.24" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+    <InternalsVisibleTo Include="WgpuSharp.Tests" />
   </ItemGroup>
 
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../icon.png" Pack="true" PackagePath="/" />
     <None Include="build/WgpuSharp.targets" Pack="true" PackagePath="build/" />
     <None Include="build/WgpuSharp.targets" Pack="true" PackagePath="buildTransitive/" />
   </ItemGroup>
