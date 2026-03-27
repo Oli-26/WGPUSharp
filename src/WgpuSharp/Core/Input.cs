@@ -6,10 +6,42 @@ namespace WgpuSharp.Core;
 /// Snapshot of keyboard and mouse state for the current frame.
 /// Key codes use the browser <c>KeyboardEvent.code</c> format (e.g. "KeyW", "Space", "ShiftLeft").
 /// </summary>
+/// <summary>A box selection event (right-click drag rectangle in canvas pixels).</summary>
+public sealed class BoxSelectEvent
+{
+    public float X1 { get; set; }
+    public float Y1 { get; set; }
+    public float X2 { get; set; }
+    public float Y2 { get; set; }
+}
+
+/// <summary>A click event (mouseup within 5px of mousedown, not a drag).</summary>
+public sealed class ClickEvent
+{
+    /// <summary>Click X in canvas pixels.</summary>
+    public float X { get; set; }
+    /// <summary>Click Y in canvas pixels.</summary>
+    public float Y { get; set; }
+    /// <summary>Mouse button (0=left, 1=middle, 2=right).</summary>
+    public int Button { get; set; }
+}
+
 public sealed class InputState
 {
     /// <summary>Array of currently pressed key codes.</summary>
     public string[] Keys { get; set; } = [];
+    /// <summary>Keys pressed since the last poll (edge-triggered, fires once per press). Excludes events from text inputs.</summary>
+    public string[] KeyDownEvents { get; set; } = [];
+    /// <summary>Click events since last poll (non-drag clicks on the canvas).</summary>
+    public ClickEvent[] ClickEvents { get; set; } = [];
+    /// <summary>Mouse-down events since last poll (fires on every mousedown on canvas).</summary>
+    public ClickEvent[] MouseDownEvents { get; set; } = [];
+    /// <summary>Box select events since last poll (right-click drag rectangles).</summary>
+    public BoxSelectEvent[] BoxSelectEvents { get; set; } = [];
+    /// <summary>Whether Ctrl (or Cmd on Mac) is held.</summary>
+    public bool CtrlKey { get; set; }
+    /// <summary>Whether Shift is held.</summary>
+    public bool ShiftKey { get; set; }
     /// <summary>Mouse X position relative to the canvas.</summary>
     public float MouseX { get; set; }
     /// <summary>Mouse Y position relative to the canvas.</summary>
@@ -27,6 +59,8 @@ public sealed class InputState
 
     /// <summary>Returns true if the given key is currently pressed. Use browser key codes like "KeyW", "Space".</summary>
     public bool IsKeyDown(string code) => Array.IndexOf(Keys, code) >= 0;
+    /// <summary>Returns true if the given key was pressed this frame (edge-triggered, fires once). Not triggered from text inputs.</summary>
+    public bool WasKeyPressed(string code) => Array.IndexOf(KeyDownEvents, code) >= 0;
     /// <summary>Returns true if the given mouse button is pressed (0=left, 1=middle, 2=right).</summary>
     public bool IsMouseButtonDown(int button) => (MouseButtons & (1 << button)) != 0;
     /// <summary>Whether the left mouse button is pressed.</summary>

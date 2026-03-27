@@ -1,0 +1,1995 @@
+@page "/editor"
+@using System.Numerics
+@using WgpuSharp.Core
+@using WgpuSharp.Commands
+@using WgpuSharp.Mesh
+@using WgpuSharp.Pipeline
+@using WgpuSharp.Resources
+@using WgpuSharp.Scene
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>WgpuSharp — Scene Editor</PageTitle>
+
+<div class="editor-root">
+    @* --- Left: Scene hierarchy --- *@
+    <div class="editor-sidebar @(_playMode ? "panel-dimmed" : "")"
+        <div class="sidebar-header">
+            <strong>Scene</strong>
+        </div>
+        <div class="sidebar-content">
+            @foreach (var (node, depth) in GetFlatHierarchy())
+            {
+                var n = node; // capture for lambda
+                bool isSelected = IsSelected(n.Id);
+                <div class="hierarchy-node @(isSelected ? "selected" : "") @(_dragNodeId == n.Id ? "dragging" : "")"
+                     style="padding-left: @(8 + depth * 16)px"
+                     draggable="true"
+                     @ondragstart="() => _dragNodeId = n.Id"
+                     @ondragover:preventDefault="true"
+                     @ondrop="() => ReparentNode(n)"
+                     @ondragend="() => _dragNodeId = null"
+                     @onclick="e => { if (e.ShiftKey) ToggleSelect(n); else SelectSingle(n); }">
+                    <span class="@(n.Visible ? "" : "text-muted")">@n.Name</span>
+                </div>
+            }
+            <div class="hierarchy-node" style="padding: 4px 8px; color: #555; font-style: italic;"
+                 @ondragover:preventDefault="true" @ondrop="ReparentToRoot">(drop here for root)</div>
+        </div>
+        <div class="sidebar-actions">
+            <button class="btn btn-sm btn-outline-light" @onclick="() => AddPrimitive(PrimitiveType.Cube)">+ Cube</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="() => AddPrimitive(PrimitiveType.Sphere)">+ Sphere</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="() => AddPrimitive(PrimitiveType.Plane)">+ Plane</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="() => AddPrimitive(PrimitiveType.Cylinder)">+ Cylinder</button>
+            <button class="btn btn-sm btn-outline-warning" @onclick="AddLight">+ Light</button>
+            <button class="btn btn-sm btn-outline-info" @onclick="ImportMesh">Import</button>
+        </div>
+        <div class="sidebar-actions" style="border-top: 1px solid #2a2a3a;">
+            <button class="btn btn-sm btn-outline-secondary" @onclick="SaveScene">Save</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="LoadScene">Load</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="TakeScreenshot">Screenshot</button>
+        </div>
+        <div class="sidebar-actions" style="border-top: 1px solid #2a2a3a;">
+            <select class="snap-select" style="width: 80px;" @bind="_selectedTemplate">
+                @foreach (var t in SceneTemplates)
+                {
+                    <option value="@t">@t</option>
+                }
+            </select>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => LoadTemplate(_selectedTemplate)">New Scene</button>
+        </div>
+    </div>
+
+    @* --- Center: Viewport --- *@
+    <div class="editor-viewport">
+        @if (_error is not null)
+        {
+            <div class="alert alert-danger m-2">@_error</div>
+        }
+        <div class="viewport-toolbar @(_playMode ? "play-toolbar" : "")">
+            @if (!_playMode)
+            {
+                <span class="toolbar-buttons">
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => _undo.Undo()" disabled="@(!_undo.CanUndo)" title="@(_undo.UndoDescription ?? "Nothing to undo")">Undo</button>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => _undo.Redo()" disabled="@(!_undo.CanRedo)" title="@(_undo.RedoDescription ?? "Nothing to redo")">Redo</button>
+                </span>
+                <span class="toolbar-buttons tool-group">
+                    <button class="btn btn-sm @(GizmoModeIs(GizmoMode.Translate) ? "btn-tool-on" : "btn-outline-secondary")"
+                            @onclick="() => SetGizmoMode(GizmoMode.Translate)" title="Move tool (W)">Move</button>
+                    <button class="btn btn-sm @(GizmoModeIs(GizmoMode.Rotate) ? "btn-tool-on" : "btn-outline-secondary")"
+                            @onclick="() => SetGizmoMode(GizmoMode.Rotate)" title="Rotate tool (E)">Rotate</button>
+                    <button class="btn btn-sm @(GizmoModeIs(GizmoMode.Scale) ? "btn-tool-on" : "btn-outline-secondary")"
+                            @onclick="() => SetGizmoMode(GizmoMode.Scale)" title="Scale tool (R)">Scale</button>
+                </span>
+                <span class="toolbar-buttons snap-group">
+                    <button class="btn btn-sm @(_snapEnabled ? "btn-snap-on" : "btn-outline-secondary")"
+                            @onclick="() => _snapEnabled = !_snapEnabled"
+                            title="Toggle grid snap (G)">Snap</button>
+                    <select class="snap-select" @bind="_snapSize" title="Snap grid size">
+                        @foreach (var s in SnapPresets)
+                        {
+                            <option value="@s">@s.ToString("G")</option>
+                        }
+                    </select>
+                </span>
+                <button class="btn btn-sm @(GroundEnabled() ? "btn-snap-on" : "btn-outline-secondary")"
+                        @onclick="ToggleGround" title="Toggle ground plane">Floor</button>
+                <button class="btn btn-sm btn-play" @onclick="EnterPlayMode">Play</button>
+                <span class="text-muted small">
+                    @if (_fps > 0) { <text>@_fps.ToString("F0") FPS</text> }
+                    | W/E/R=tool  G=snap  Ctrl+Z/Y  Del  Ctrl+D  F=focus
+                </span>
+            }
+            else
+            {
+                <button class="btn btn-sm btn-stop" @onclick="ExitPlayMode">Stop</button>
+                <span class="play-label">PLAYING</span>
+                <span class="text-muted small">
+                    @if (_fps > 0) { <text>@_fps.ToString("F0") FPS</text> }
+                    | WASD=move  Mouse=look  Space=jump  Scroll=speed  Esc=stop
+                </span>
+            }
+        </div>
+        <div style="position: relative;">
+            <canvas id="gpu-canvas" width="800" height="600"
+                    style="display: block; width: 100%; height: calc(100vh - 3.5rem - 28px); cursor: crosshair;"></canvas>
+            @if (_playMode && _totalCollectibles > 0)
+            {
+                <div class="play-hud">
+                    <span class="hud-score">@_score / @_totalCollectibles</span>
+                    @if (_score >= _totalCollectibles)
+                    {
+                        <span class="hud-win">ALL COLLECTED!</span>
+                    }
+                </div>
+            }
+            @if (_playMode && _triggerMessage is not null)
+            {
+                <div class="trigger-message">@_triggerMessage</div>
+            }
+            @if (_playMode && _scene.GetAllNodes().Any(n => n.Tag == NodeTag.Enemy))
+            {
+                <div class="health-bar">
+                    <div class="health-fill" style="width: @(_playerHealth)%"></div>
+                    <span class="health-text">@_playerHealth HP</span>
+                </div>
+                @if (_playerHealth <= 0)
+                {
+                    <div class="game-over">GAME OVER</div>
+                }
+            }
+            @if (_playMode)
+            {
+                <canvas id="minimap-canvas" width="150" height="150" style="position: absolute; bottom: 50px; right: 10px; border: 1px solid #444; border-radius: 4px; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.5);"></canvas>
+            }
+            @if (_playMode && _timerEnabled)
+            {
+                <div class="timer-hud">@TimeSpan.FromSeconds(Math.Max(0, _levelTimer)).ToString(@"m\:ss")</div>
+            }
+            @if (_importing)
+            {
+                <div class="import-overlay">
+                    <div class="import-dialog">
+                        <div class="import-title">Importing Model</div>
+                        <div class="import-phase" id="import-progress-label">@(_importPhase ?? "Working...")</div>
+                        <div class="import-bar-track">
+                            <div class="import-bar-fill" id="import-progress-bar" style="width: @(_importPercent)%"></div>
+                        </div>
+                    </div>
+                </div>
+            }
+            @if (_showStats)
+            {
+                <div class="stats-overlay">
+                    <div>FPS: @_fps.ToString("F0")</div>
+                    <div>Nodes: @_scene.GetAllNodes().Count()</div>
+                    <div>Lights: @_scene.GetLightNodes().Count()</div>
+                    <div>Selected: @_selectedIds.Count</div>
+                    @if (_playMode)
+                    {
+                        <div>Pos: @_fpsCamera.Position.X.ToString("F1"), @_fpsCamera.Position.Y.ToString("F1"), @_fpsCamera.Position.Z.ToString("F1")</div>
+                        <div>Grounded: @_fpsCamera.IsGrounded</div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    @* --- Right: Inspector --- *@
+    <div class="editor-inspector @(_playMode ? "panel-dimmed" : "")"
+        <div class="sidebar-header">
+            <strong>Inspector</strong>
+        </div>
+        @if (_selectedIds.Count > 1)
+        {
+            <div class="inspector-content">
+                <div class="prop-group">
+                    <label>Selection</label>
+                    <span>@_selectedIds.Count objects selected</span>
+                </div>
+                <div class="prop-group mt-3">
+                    <button class="btn btn-sm btn-outline-danger" @onclick="DeleteSelected">Delete All</button>
+                    <button class="btn btn-sm btn-outline-secondary ms-1" @onclick="DuplicateSelected">Duplicate All</button>
+                </div>
+                <div class="prop-group">
+                    <label>Align</label>
+                    <div style="display: flex; gap: 3px; flex-wrap: wrap;">
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => AlignSelected(0, false)">Left</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => AlignSelected(0, true)">Right</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => AlignSelected(1, false)">Bottom</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => AlignSelected(1, true)">Top</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => AlignSelected(2, false)">Front</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => AlignSelected(2, true)">Back</button>
+                    </div>
+                </div>
+                <div class="prop-group">
+                    <label>Distribute</label>
+                    <div style="display: flex; gap: 3px;">
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => DistributeSelected(0)">X</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => DistributeSelected(1)">Y</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => DistributeSelected(2)">Z</button>
+                    </div>
+                </div>
+            </div>
+        }
+        else if (_scene.SelectedNode is { } sel)
+        {
+            <div class="inspector-content">
+                <div class="prop-group">
+                    <label>Name</label>
+                    <input type="text" class="form-control form-control-sm" @bind="sel.Name" @bind:event="oninput" />
+                </div>
+
+                <div class="prop-group">
+                    <label>Visible</label>
+                    <input type="checkbox" @bind="sel.Visible" />
+                </div>
+
+                <div class="prop-group">
+                    <label>Solid</label>
+                    <input type="checkbox" @bind="sel.Solid" />
+                </div>
+
+                <div class="prop-group">
+                    <label>Locked</label>
+                    <input type="checkbox" @bind="sel.Locked" />
+                </div>
+
+                <div class="prop-group">
+                    <label>Tag</label>
+                    <select class="form-control form-control-sm" @bind="sel.Tag">
+                        @foreach (var t in Enum.GetValues<NodeTag>())
+                        {
+                            <option value="@t">@t</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="prop-group">
+                    <label>Position</label>
+                    <div class="vec3-row">
+                        <div class="vec3-field"><span>X</span><input type="number" step="0.1" value="@sel.Transform.Position.X.ToString("F2")" @onchange="e => SetPosition(sel, 0, e)" /></div>
+                        <div class="vec3-field"><span>Y</span><input type="number" step="0.1" value="@sel.Transform.Position.Y.ToString("F2")" @onchange="e => SetPosition(sel, 1, e)" /></div>
+                        <div class="vec3-field"><span>Z</span><input type="number" step="0.1" value="@sel.Transform.Position.Z.ToString("F2")" @onchange="e => SetPosition(sel, 2, e)" /></div>
+                    </div>
+                </div>
+
+                <div class="prop-group">
+                    <label>Rotation (deg)</label>
+                    @{ var euler = sel.Transform.EulerAngles * (180f / MathF.PI); }
+                    <div class="vec3-row">
+                        <div class="vec3-field"><span>X</span><input type="number" step="1" value="@euler.X.ToString("F1")" @onchange="e => SetRotation(sel, 0, e)" /></div>
+                        <div class="vec3-field"><span>Y</span><input type="number" step="1" value="@euler.Y.ToString("F1")" @onchange="e => SetRotation(sel, 1, e)" /></div>
+                        <div class="vec3-field"><span>Z</span><input type="number" step="1" value="@euler.Z.ToString("F1")" @onchange="e => SetRotation(sel, 2, e)" /></div>
+                    </div>
+                </div>
+
+                <div class="prop-group">
+                    <label>Scale</label>
+                    <div class="vec3-row">
+                        <div class="vec3-field"><span>X</span><input type="number" step="0.1" value="@sel.Transform.Scale.X.ToString("F2")" @onchange="e => SetScale(sel, 0, e)" /></div>
+                        <div class="vec3-field"><span>Y</span><input type="number" step="0.1" value="@sel.Transform.Scale.Y.ToString("F2")" @onchange="e => SetScale(sel, 1, e)" /></div>
+                        <div class="vec3-field"><span>Z</span><input type="number" step="0.1" value="@sel.Transform.Scale.Z.ToString("F2")" @onchange="e => SetScale(sel, 2, e)" /></div>
+                    </div>
+                </div>
+
+                <div class="prop-group">
+                    <label>Material</label>
+                    <select class="form-control form-control-sm" value="@(sel.MaterialPreset ?? "")" @onchange="e => ApplyMaterial(sel, e)">
+                        <option value="">Custom</option>
+                        @foreach (var preset in MaterialPresets.All)
+                        {
+                            <option value="@preset.Name">@preset.Name</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="prop-group">
+                    <label>Color</label>
+                    <input type="color"
+                           value="@ColorToHex(sel.Color)"
+                           @onchange="e => SetNodeColor(sel, e)" />
+                </div>
+
+                @if (sel.Light is { } light)
+                {
+                    <div class="prop-group">
+                        <label>Light Color</label>
+                        <input type="color"
+                               value="@Vec3ToHex(light.Color)"
+                               @onchange="e => SetLightColor(light, e)" />
+                    </div>
+                    <div class="prop-group">
+                        <label>Intensity</label>
+                        <input type="range" min="0.5" max="10" step="0.5"
+                               value="@light.Intensity.ToString("F1")"
+                               @oninput="e => { if (float.TryParse(e.Value?.ToString(), out var v)) light.Intensity = v; }" />
+                        <span class="text-muted small">@light.Intensity.ToString("F1")</span>
+                    </div>
+                    <div class="prop-group">
+                        <label>Range</label>
+                        <input type="range" min="1" max="30" step="1"
+                               value="@light.Range.ToString("F0")"
+                               @oninput="e => { if (float.TryParse(e.Value?.ToString(), out var v)) light.Range = v; }" />
+                        <span class="text-muted small">@light.Range.ToString("F0")</span>
+                    </div>
+                }
+
+                <div class="prop-group">
+                    <label>Script</label>
+                    <select class="form-control form-control-sm" style="margin-bottom: 4px;"
+                            @onchange="e => ApplyScriptTemplate(sel, e)">
+                        <option value="">-- Insert template --</option>
+                        @foreach (var t in ScriptTemplates)
+                        {
+                            <option value="@t.name">@t.name</option>
+                        }
+                    </select>
+                    <textarea class="form-control form-control-sm script-editor"
+                              rows="5" spellcheck="false"
+                              placeholder="// Select a template above or write commands"
+                              @bind="sel.Script" @bind:event="onchange"></textarea>
+                </div>
+
+                <div class="prop-group mt-3">
+                    <button class="btn btn-sm btn-outline-danger" @onclick="DeleteSelected">Delete</button>
+                    <button class="btn btn-sm btn-outline-secondary ms-1" @onclick="DuplicateSelected">Duplicate</button>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="inspector-content">
+                <div class="prop-group">
+                    <label class="section-label">Scene Settings</label>
+                </div>
+
+                <div class="prop-group">
+                    <label>Sky Zenith</label>
+                    <input type="color" value="@Vec3ToHex(_settings.SkyZenith)"
+                           @onchange="e => _settings.SkyZenith = HexToVec3(e)" />
+                </div>
+                <div class="prop-group">
+                    <label>Sky Horizon</label>
+                    <input type="color" value="@Vec3ToHex(_settings.SkyHorizon)"
+                           @onchange="e => _settings.SkyHorizon = HexToVec3(e)" />
+                </div>
+                <div class="prop-group">
+                    <label>Sky Ground</label>
+                    <input type="color" value="@Vec3ToHex(_settings.SkyGround)"
+                           @onchange="e => _settings.SkyGround = HexToVec3(e)" />
+                </div>
+
+                <div class="prop-group">
+                    <label>Sun Color</label>
+                    <input type="color" value="@Vec3ToHex(_settings.SunColor)"
+                           @onchange="e => _settings.SunColor = HexToVec3(e)" />
+                </div>
+                <div class="prop-group">
+                    <label>Sun Intensity</label>
+                    <input type="range" min="0" max="2" step="0.05"
+                           value="@_settings.SunIntensity.ToString("F2")"
+                           @oninput="e => { if (float.TryParse(e.Value?.ToString(), out var v)) _settings.SunIntensity = v; }" />
+                    <span class="text-muted small">@_settings.SunIntensity.ToString("F2")</span>
+                </div>
+
+                <div class="prop-group">
+                    <label>Ambient Color</label>
+                    <input type="color" value="@Vec3ToHex(_settings.AmbientColor)"
+                           @onchange="e => _settings.AmbientColor = HexToVec3(e)" />
+                </div>
+
+                <div class="prop-group">
+                    <label>Fog Color</label>
+                    <input type="color" value="@Vec3ToHex(_settings.FogColor)" @onchange="e => _settings.FogColor = HexToVec3(e)" />
+                </div>
+                <div class="prop-group">
+                    <label>Fog Start</label>
+                    <input type="range" min="5" max="100" step="5" value="@_settings.FogStart.ToString("F0")" @oninput="e => { if (float.TryParse(e.Value?.ToString(), out var v)) _settings.FogStart = v; }" />
+                    <span class="text-muted small">@_settings.FogStart.ToString("F0")</span>
+                </div>
+                <div class="prop-group">
+                    <label>Fog End</label>
+                    <input type="range" min="10" max="200" step="5" value="@_settings.FogEnd.ToString("F0")" @oninput="e => { if (float.TryParse(e.Value?.ToString(), out var v)) _settings.FogEnd = v; }" />
+                    <span class="text-muted small">@_settings.FogEnd.ToString("F0")</span>
+                </div>
+
+                <div class="prop-group" style="margin-top: 12px;">
+                    <label class="section-label">Gameplay</label>
+                </div>
+                <div class="prop-group">
+                    <label>Level Timer</label>
+                    <input type="checkbox" @bind="_timerEnabled" /> Enable
+                </div>
+                @if (_timerEnabled)
+                {
+                    <div class="prop-group">
+                        <label>Time Limit</label>
+                        <input type="range" min="10" max="300" step="10" value="@_levelTimerMax.ToString("F0")" @oninput="e => { if (float.TryParse(e.Value?.ToString(), out var v)) _levelTimerMax = v; }" />
+                        <span class="text-muted small">@_levelTimerMax.ToString("F0")s</span>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private string? _error;
+    private float _fps;
+    private GpuLoop? _loop;
+    private GpuInput? _input;
+    private GpuDevice? _device;
+    private SceneRenderer? _renderer;
+    private readonly Scene _scene = new();
+    private readonly OrbitCamera _camera = new();
+    private (float yaw, float pitch, float distance, Vector3 target)?[] _cameraBookmarks = new (float, float, float, Vector3)?[4];
+    private readonly UndoStack _undo = new();
+    private readonly SceneSettings _settings = new();
+    private readonly FpsCamera _fpsCamera = new();
+    private bool _playMode;
+
+    // Play-mode game state
+    private int _score;
+    private int _totalCollectibles;
+    private float _playTime;
+    private readonly HashSet<int> _collectedIds = new();
+
+    // Trigger zone state
+    private readonly HashSet<int> _activeTriggers = new();
+    private string? _triggerMessage;
+    private float _triggerMessageTimer;
+
+    // Teleporter state
+    private float _teleportCooldown;
+
+    // Door-and-key state
+    private readonly HashSet<string> _collectedKeys = new();
+
+    // Enemy/health state
+    private int _playerHealth = 100;
+    private float _damageCooldown;
+    private float _damageZoneCooldown;
+
+    // Checkpoint state
+    private Vector3 _lastCheckpoint = Vector3.Zero;
+
+    // Timer
+    private float _levelTimer;
+    private float _levelTimerMax = 60f;
+    private bool _timerEnabled;
+
+    // Script engine state
+    private Dictionary<int, (List<ScriptCommand> cmds, ScriptState state, Vector3 startPos)> _scriptData = new();
+
+    // Hierarchy drag-drop
+    private int? _dragNodeId;
+
+    // Multi-selection
+    private readonly HashSet<int> _selectedIds = new();
+
+    // Copy-paste clipboard
+    private List<(string name, string? meshType, string? materialPreset, NodeTag tag, bool solid, bool visible, Vector4 color, Vector3 pos, Quaternion rot, Vector3 scale, PointLightData? light, byte[]? importedData, string? importedFileName)> _clipboard = new();
+
+    // Grid snap
+    private bool _snapEnabled = true;
+    private bool _showStats;
+    private float _snapSize = 0.5f;
+    private static readonly float[] SnapPresets = [0.1f, 0.25f, 0.5f, 1f, 2f];
+
+    // Cached primitive meshes
+    private MeshBuffers? _cubeMesh;
+    private MeshBuffers? _sphereMesh;
+    private MeshBuffers? _planeMesh;
+    private MeshBuffers? _cylinderMesh;
+    private int _nodeCounter;
+
+    private enum PrimitiveType { Cube, Sphere, Plane, Cylinder }
+    private MeshBuffers? _lightMesh; // small sphere for light icons
+
+    private static readonly Vector4[] PaletteColors =
+    [
+        new(0.85f, 0.85f, 0.85f, 1), // light grey
+        new(0.92f, 0.35f, 0.30f, 1), // red
+        new(0.30f, 0.69f, 0.31f, 1), // green
+        new(0.26f, 0.52f, 0.96f, 1), // blue
+        new(1.00f, 0.76f, 0.03f, 1), // yellow
+        new(0.61f, 0.35f, 0.71f, 1), // purple
+        new(0.00f, 0.74f, 0.83f, 1), // cyan
+        new(1.00f, 0.60f, 0.00f, 1), // orange
+    ];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            _device = await adapter.RequestDeviceAsync();
+            var canvas = await GpuCanvas.ConfigureAsync(_device, "gpu-canvas");
+            _input = await GpuInput.InitAsync(_device, "gpu-canvas");
+
+            // Create renderer
+            _renderer = await SceneRenderer.CreateAsync(_device, canvas.Format);
+
+            // Create cached primitive meshes
+            _cubeMesh = await Primitives.Cube().CreateBuffersAsync(_device);
+            _sphereMesh = await Primitives.Sphere().CreateBuffersAsync(_device);
+            _planeMesh = await Primitives.Plane(4).CreateBuffersAsync(_device);
+            _cylinderMesh = await Primitives.Cylinder().CreateBuffersAsync(_device);
+            _lightMesh = await Primitives.Sphere(8, 16).CreateBuffersAsync(_device); // low-poly light icon
+
+            // Setup default scene
+            await SetupDefaultScene();
+
+            // Depth buffer
+            var depthTexture = await canvas.CreateDepthTextureAsync(_device);
+            var depthView = await depthTexture.CreateViewAsync();
+
+            _loop = await Gpu.RunLoopAsync(_device, async (frame) =>
+            {
+                _fps = frame.Fps;
+
+                // Handle canvas resize
+                if (await canvas.ResizeToDisplaySizeAsync())
+                {
+                    await depthTexture.DisposeAsync();
+                    depthTexture = await canvas.CreateDepthTextureAsync(_device);
+                    depthView = await depthTexture.CreateViewAsync();
+                }
+
+                var input = await _input!.GetStateAsync();
+
+                if (_playMode)
+                {
+                    // --- Play mode: FPS camera + gameplay ---
+                    _scene.UpdateTransforms(); // Once per frame, before all gameplay
+                    _fpsCamera.ProcessInput(input, frame.DeltaTime, _scene);
+                    _playTime += frame.DeltaTime;
+
+                    // Escape exits play mode
+                    if (input.WasKeyPressed("Escape"))
+                        ExitPlayMode();
+
+                    // Gameplay
+                    UpdateCollectibles(frame.DeltaTime);
+                    CheckTriggers(frame.DeltaTime);
+                    UpdateEnemies(frame.DeltaTime);
+                    UpdateDoorsAndKeys(frame.DeltaTime);
+                    UpdateTeleporters();
+                    UpdateDamageZones(frame.DeltaTime);
+                    UpdateHealthPickups();
+                    UpdateMovingPlatforms(frame.DeltaTime);
+                    CheckCheckpoints();
+                    UpdateNPCs();
+                    ExecuteScripts(frame.DeltaTime);
+
+                    // Timer countdown
+                    if (_timerEnabled)
+                    {
+                        _levelTimer -= frame.DeltaTime;
+                        if (_levelTimer <= 0) { _levelTimer = 0; _playerHealth = 0; }
+                    }
+
+                    // Respawn to checkpoint on death (after 2 seconds)
+                    if (_playerHealth <= 0 && _damageCooldown <= 0)
+                    {
+                        _playerHealth = 50;
+                        _fpsCamera.Position = _lastCheckpoint + new Vector3(0, FpsCamera.EyeHeight, 0);
+                        _damageCooldown = 2f;
+                    }
+
+                    _scene.UpdateTransforms();
+
+                    var batch = new RenderBatch(_device);
+                    var colorView = batch.GetCurrentTextureView(canvas);
+                    _renderer!.Render(batch, _scene, _fpsCamera, canvas, colorView, depthView, _settings);
+                    await batch.FlushAsync();
+
+                    // Minimap
+                    await DrawMinimap();
+                }
+                else
+                {
+                    // --- Editor mode: orbit camera + gizmo + picking ---
+                    var gizmo = _renderer!.Gizmo!;
+                    bool gizmoActive = ProcessGizmo(input, canvas, gizmo);
+
+                    if (!gizmoActive)
+                    {
+                        _camera.ProcessInput(input, frame.DeltaTime);
+                        ProcessPicking(input, canvas);
+                        ProcessBoxSelect(input, canvas);
+                    }
+
+                    ProcessShortcuts(input);
+
+                    _scene.UpdateTransforms();
+
+                    var batch = new RenderBatch(_device);
+                    var colorView = batch.GetCurrentTextureView(canvas);
+                    _renderer!.Render(batch, _scene, _camera, canvas, colorView, depthView, _settings, _selectedIds);
+                    await batch.FlushAsync();
+                }
+
+                if (frame.FrameIndex % 20 == 0) StateHasChanged();
+            });
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private void AddLight()
+    {
+        var node = new SceneNode($"Light {++_nodeCounter}")
+        {
+            MeshBuffers = _lightMesh,
+            MeshType = "Light",
+            Color = new Vector4(1f, 0.95f, 0.6f, 1f), // warm yellow icon
+            Light = new PointLightData
+            {
+                Color = new Vector3(1f, 0.95f, 0.8f),
+                Intensity = 3f,
+                Range = 10f,
+            },
+        };
+        node.Transform.Position = SnapPosition(new Vector3(0, 2f, 0));
+        node.Transform.Scale = new Vector3(0.2f); // small icon sphere
+        _undo.Do(new AddNodeAction(_scene, node));
+        SelectSingle(node);
+    }
+
+    // --- Selection helpers ---
+
+    private bool IsSelected(int nodeId) => _selectedIds.Contains(nodeId);
+
+    private void SelectSingle(SceneNode? node)
+    {
+        _selectedIds.Clear();
+        if (node is not null) _selectedIds.Add(node.Id);
+        _scene.SelectedNode = node;
+    }
+
+    private void ToggleSelect(SceneNode node)
+    {
+        if (_selectedIds.Contains(node.Id))
+        {
+            _selectedIds.Remove(node.Id);
+            _scene.SelectedNode = _selectedIds.Count > 0 ? _scene.FindById(_selectedIds.First()) : null;
+        }
+        else
+        {
+            _selectedIds.Add(node.Id);
+            _scene.SelectedNode = node;
+        }
+    }
+
+    private void SelectAll()
+    {
+        _selectedIds.Clear();
+        SceneNode? last = null;
+        foreach (var node in _scene.GetAllNodes())
+        {
+            _selectedIds.Add(node.Id);
+            last = node;
+        }
+        _scene.SelectedNode = last;
+    }
+
+    private void ClearSelection()
+    {
+        _selectedIds.Clear();
+        _scene.SelectedNode = null;
+    }
+
+    private List<SceneNode> GetSelectedNodes()
+    {
+        var nodes = new List<SceneNode>();
+        foreach (var id in _selectedIds)
+        {
+            var node = _scene.FindById(id);
+            if (node is not null) nodes.Add(node);
+        }
+        return nodes;
+    }
+
+    private void ReparentNode(SceneNode newParent)
+    {
+        if (_dragNodeId is null) return;
+        var dragNode = _scene.FindById(_dragNodeId.Value);
+        if (dragNode is null || dragNode == newParent) return;
+        if (newParent.FindById(dragNode.Id) is not null) return;
+        dragNode.Detach();
+        _scene.Remove(dragNode);
+        newParent.AddChild(dragNode);
+        _dragNodeId = null;
+    }
+
+    private void ReparentToRoot()
+    {
+        if (_dragNodeId is null) return;
+        var dragNode = _scene.FindById(_dragNodeId.Value);
+        if (dragNode is null) return;
+        dragNode.Detach();
+        _scene.Remove(dragNode);
+        _scene.Add(dragNode);
+        _dragNodeId = null;
+    }
+
+    // --- Script templates ---
+
+    private static readonly (string name, string script)[] ScriptTemplates =
+    [
+        ("Spinning Pickup", "// Collectible-style spin and bob\nRotate(0, 180, 0)\nBob(3, 0.3)"),
+        ("Patrolling Enemy", "// Chases and faces the player\nFollowPlayer(3, 12)\nLookAtPlayer()"),
+        ("Aggressive Enemy", "// Fast chase, close range\nFollowPlayer(6, 20)\nLookAtPlayer()"),
+        ("Floating Sentry", "// Orbits and watches the player\nOrbit(4, 0.8)\nLookAtPlayer()"),
+        ("Pulsing Light", "// Scale pulse effect for light orbs\nScale(2)\nBob(1.5, 0.2)"),
+        ("Orbiting Light", "// Light that circles a point\nOrbit(5, 0.5)"),
+        ("Swinging Obstacle", "// Back-and-forth rotation\nRotate(0, 0, 60)"),
+        ("Bounce Pad", "// Visual feedback on a jump pad\nScale(3)\nBob(4, 0.1)"),
+        ("Trigger Message", "// Shows text when player enters\nOnEnter(\"Welcome to the arena!\")"),
+        ("Trigger Door Open", "// Toggles a named object on enter\n// Rename target to match\nOnEnterToggle(\"MyDoor\")"),
+        ("NPC Idle", "// Slow rotation, looks alive\nRotate(0, 15, 0)"),
+        ("Decoration Spin", "// Gentle decorative rotation\nRotate(0, 30, 0)"),
+        ("Hazard Warning", "// Pulsing danger indicator\nScale(1.5)\nSetColor(1, 0.2, 0.1)"),
+        ("Moving Wall", "// Oscillating wall obstacle\nBob(0.5, 3)"),
+    ];
+
+    private void ApplyScriptTemplate(SceneNode node, ChangeEventArgs e)
+    {
+        var name = e.Value?.ToString();
+        if (string.IsNullOrEmpty(name)) return;
+        var template = Array.Find(ScriptTemplates, t => t.name == name);
+        if (template == default) return;
+        // Append to existing script (or set if empty)
+        if (string.IsNullOrWhiteSpace(node.Script))
+            node.Script = template.script;
+        else
+            node.Script = node.Script.TrimEnd() + "\n\n" + template.script;
+    }
+
+    private bool GizmoModeIs(GizmoMode mode) => _renderer?.Gizmo?.Mode == mode;
+    private void SetGizmoMode(GizmoMode mode) { if (_renderer?.Gizmo is { } g) g.Mode = mode; }
+    private bool GroundEnabled() => _renderer?.Ground?.Enabled ?? true;
+    private void ToggleGround() { if (_renderer?.Ground is { } g) g.Enabled = !g.Enabled; }
+
+    // --- Mesh import ---
+
+    // --- Mesh import ---
+
+    private string? _importPhase;
+    private int _importPercent;
+    private bool _importing;
+
+    private async Task ImportMesh()
+    {
+        if (_device is null) return;
+        try
+        {
+            _importing = true;
+            _importPhase = "Picking file...";
+            _importPercent = 0;
+            StateHasChanged();
+
+            // Pick file and read as base64 (runs in Web Worker — off main thread)
+            var result = await JS.InvokeAsync<string?>("WgpuSharpEditor.pickAndReadFileBase64", ".obj,.glb,.stl");
+            if (result is null) { _importing = false; return; }
+
+            // Result format: "filename|base64data"
+            var sep = result.IndexOf('|');
+            if (sep < 0) { _importing = false; return; }
+            var fileName = result[..sep];
+            var base64 = result[(sep + 1)..];
+
+            _importPhase = "Decoding...";
+            _importPercent = 30;
+            StateHasChanged();
+            await Task.Yield(); // let UI update
+
+            var bytes = Convert.FromBase64String(base64);
+
+            _importPhase = "Parsing mesh...";
+            _importPercent = 50;
+            StateHasChanged();
+            await Task.Yield();
+
+            var meshes = MeshLoader.Load(bytes, fileName);
+            if (meshes.Length == 0) { _importing = false; _error = "No meshes found in file."; return; }
+
+            var mesh = meshes[0];
+
+            if (!mesh.HasNormals)
+            {
+                _importPhase = "Computing normals...";
+                _importPercent = 70;
+                StateHasChanged();
+                await Task.Yield();
+
+                mesh = mesh.ComputeFlatNormals();
+            }
+
+            _importPhase = "Uploading to GPU...";
+            _importPercent = 85;
+            StateHasChanged();
+            await Task.Yield();
+
+            var buffers = await mesh.CreateBuffersAsync(_device);
+
+            var name = Path.GetFileNameWithoutExtension(fileName);
+            var node = new SceneNode($"{name} {++_nodeCounter}")
+            {
+                MeshBuffers = buffers,
+                MeshType = "Imported",
+                ImportedMeshData = bytes,
+                ImportedMeshFileName = fileName,
+                Color = new Vector4(0.8f, 0.8f, 0.8f, 1f),
+            };
+            node.Transform.Position = SnapPosition(new Vector3(0, 0.5f, 0));
+            _undo.Do(new AddNodeAction(_scene, node));
+            SelectSingle(node);
+
+            _importPercent = 100;
+            _importPhase = null;
+        }
+        catch (Exception ex)
+        {
+            _error = $"Import failed: {ex.Message}";
+        }
+        finally
+        {
+            _importing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task<MeshBuffers?> CreateImportedMeshBuffers(byte[] data, string fileName)
+    {
+        if (_device is null) return null;
+        var meshes = MeshLoader.Load(data, fileName);
+        if (meshes.Length == 0) return null;
+        var mesh = meshes[0];
+        if (!mesh.HasNormals) mesh = mesh.ComputeFlatNormals();
+        return await mesh.CreateBuffersAsync(_device);
+    }
+
+    // --- Play mode ---
+
+    // Store original transforms so we can restore on exit
+    private Dictionary<int, (Vector3 pos, Quaternion rot, bool visible, bool solid)> _playModeSnapshot = new();
+
+    private void EnterPlayMode()
+    {
+        _fpsCamera.InitFromOrbitCamera(_camera);
+        _score = 0;
+        _playTime = 0;
+        _collectedIds.Clear();
+        _activeTriggers.Clear();
+        _collectedKeys.Clear();
+        _triggerMessage = null;
+        _triggerMessageTimer = 0;
+        _playerHealth = 100;
+        _damageCooldown = 0;
+        _damageZoneCooldown = 0;
+        _teleportCooldown = 0;
+        _lastCheckpoint = Vector3.Zero;
+        _levelTimer = _levelTimerMax;
+        _totalCollectibles = _scene.GetAllNodes().Count(n => n.Tag == NodeTag.Collectible);
+
+        // Snapshot transforms so we can restore after play
+        _playModeSnapshot.Clear();
+        _scriptData.Clear();
+        foreach (var node in _scene.GetAllNodes())
+        {
+            _playModeSnapshot[node.Id] = (node.Transform.Position, node.Transform.Rotation, node.Visible, node.Solid);
+            // Parse scripts
+            if (!string.IsNullOrWhiteSpace(node.Script))
+            {
+                var cmds = ScriptEngine.Parse(node.Script);
+                if (cmds.Count > 0)
+                    _scriptData[node.Id] = (cmds, new ScriptState(), node.Transform.Position);
+            }
+        }
+
+        _playMode = true;
+    }
+
+    private void ExitPlayMode()
+    {
+        _playMode = false;
+
+        // Restore transforms, visibility, and solidity from snapshot
+        foreach (var (id, snap) in _playModeSnapshot)
+        {
+            var node = _scene.FindById(id);
+            if (node is null) continue;
+            node.Transform.Position = snap.pos;
+            node.Transform.Rotation = snap.rot;
+            node.Visible = snap.visible;
+            node.Solid = snap.solid;
+        }
+
+        // Clear all play-mode state
+        _scriptData.Clear();
+        _triggerMessage = null;
+        _triggerMessageTimer = 0;
+        _collectedIds.Clear();
+        _collectedKeys.Clear();
+        _activeTriggers.Clear();
+
+        _ = JS.InvokeVoidAsync("WgpuSharpEditor.stopAllAudio");
+    }
+
+    private void UpdateCollectibles(float dt)
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        float pw = 0.5f; // collection radius
+
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.Collectible || !node.Visible) continue;
+            if (_collectedIds.Contains(node.Id)) continue;
+
+            // Rotate collectibles (bobbing spin)
+            var euler = node.Transform.EulerAngles;
+            euler.Y += 2f * dt;
+            node.Transform.EulerAngles = euler;
+            // Gentle bob
+            var basePos = _playModeSnapshot.TryGetValue(node.Id, out var snap) ? snap.pos : node.Transform.Position;
+            node.Transform.Position = basePos + new Vector3(0, MathF.Sin(_playTime * 3f) * 0.15f, 0);
+
+            // Check player proximity
+            var objPos = node.Transform.WorldMatrix.Translation;
+            var diff = playerPos - objPos;
+            diff.Y *= 0.5f; // forgiving vertical range
+            if (diff.Length() < pw + 0.5f)
+            {
+                // Collected!
+                node.Visible = false;
+                _collectedIds.Add(node.Id);
+                _score++;
+            }
+        }
+    }
+
+    private void CheckTriggers(float dt)
+    {
+        if (_triggerMessageTimer > 0)
+        {
+            _triggerMessageTimer -= dt;
+            if (_triggerMessageTimer <= 0) _triggerMessage = null;
+        }
+
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.Trigger || !node.Visible) continue;
+            var aabb = FpsCamera.ComputeWorldAABB(node.Transform.WorldMatrix);
+            bool inside = playerPos.X > aabb.Min.X && playerPos.X < aabb.Max.X
+                       && playerPos.Y > aabb.Min.Y && playerPos.Y < aabb.Max.Y + 1.8f
+                       && playerPos.Z > aabb.Min.Z && playerPos.Z < aabb.Max.Z;
+            if (inside && !_activeTriggers.Contains(node.Id))
+            {
+                _activeTriggers.Add(node.Id);
+                _triggerMessage = $"Entered: {node.Name}";
+                _triggerMessageTimer = 3f;
+            }
+            else if (!inside)
+            {
+                _activeTriggers.Remove(node.Id);
+            }
+        }
+    }
+
+    private void UpdateEnemies(float dt)
+    {
+        if (_playerHealth <= 0) return;
+        _damageCooldown = MathF.Max(0, _damageCooldown - dt);
+
+        var playerFeet = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.Enemy || !node.Visible) continue;
+            var pos = node.Transform.Position;
+            var toPlayer = playerFeet - pos;
+            toPlayer.Y = 0;
+            float dist = toPlayer.Length();
+
+            if (dist > 0.5f && dist < 12f)
+            {
+                var dir = toPlayer / dist;
+                node.Transform.Position = pos + dir * MathF.Min(2.5f * dt, dist - 0.4f);
+            }
+
+            if (dist < 1.2f && _damageCooldown <= 0)
+            {
+                _playerHealth = Math.Max(0, _playerHealth - 10);
+                _damageCooldown = 1f;
+            }
+        }
+    }
+
+    private void UpdateDoorsAndKeys(float dt)
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+
+        // Collect keys
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.Key || !node.Visible) continue;
+            var pos = node.Transform.WorldMatrix.Translation;
+            if (Vector3.Distance(playerPos, pos) < 1.5f)
+            {
+                node.Visible = false;
+                // Key name prefix is the key ID (e.g. "Red Key" matches "Red Door")
+                var prefix = node.Name.Replace(" Key", "").Replace(" key", "").Trim();
+                _collectedKeys.Add(prefix);
+                _triggerMessage = $"Picked up: {node.Name}";
+                _triggerMessageTimer = 2f;
+            }
+        }
+
+        // Open matching doors
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.Door) continue;
+            var prefix = node.Name.Replace(" Door", "").Replace(" door", "").Trim();
+            if (_collectedKeys.Contains(prefix))
+            {
+                node.Solid = false;
+                node.Visible = false; // door disappears when unlocked
+            }
+        }
+    }
+
+    private void UpdateTeleporters()
+    {
+        if (_teleportCooldown > 0) { _teleportCooldown -= 0.016f; return; }
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.Teleporter || !node.Visible) continue;
+            var pos = node.Transform.WorldMatrix.Translation;
+            if (Vector3.Distance(playerPos, pos) > 1.5f) continue;
+            // Find matching teleporter by name prefix
+            var prefix = node.Name.Split(' ')[0];
+            foreach (var other in _scene.GetAllNodes())
+            {
+                if (other.Tag != NodeTag.Teleporter || other.Id == node.Id || !other.Visible) continue;
+                if (!other.Name.StartsWith(prefix)) continue;
+                var dest = other.Transform.WorldMatrix.Translation;
+                _fpsCamera.Position = dest + new Vector3(0, FpsCamera.EyeHeight, 0);
+                _teleportCooldown = 1f;
+                _triggerMessage = $"Teleported to {other.Name}";
+                _triggerMessageTimer = 2f;
+                return;
+            }
+        }
+    }
+
+    private async Task DrawMinimap()
+    {
+        var playerPos = _fpsCamera.Position;
+        var dots = new List<object>();
+        dots.Add(new { x = playerPos.X, z = playerPos.Z, color = "#0f0", size = 4 });
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (!node.Visible) continue;
+            var p = node.Transform.WorldMatrix.Translation;
+            if (node.Tag == NodeTag.Enemy) dots.Add(new { x = p.X, z = p.Z, color = "#f44", size = 3 });
+            else if (node.Tag == NodeTag.Collectible) dots.Add(new { x = p.X, z = p.Z, color = "#ff0", size = 2 });
+            else if (node.Tag == NodeTag.Key) dots.Add(new { x = p.X, z = p.Z, color = "#0ff", size = 2 });
+        }
+        await JS.InvokeVoidAsync("WgpuSharpEditor.drawMinimap", playerPos.X, playerPos.Z, dots.ToArray());
+    }
+
+    private void CheckCheckpoints()
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.Checkpoint || !node.Visible) continue;
+            var aabb = FpsCamera.ComputeWorldAABB(node.Transform.WorldMatrix);
+            bool inside = playerPos.X > aabb.Min.X && playerPos.X < aabb.Max.X
+                       && playerPos.Y > aabb.Min.Y && playerPos.Y < aabb.Max.Y + 1.8f
+                       && playerPos.Z > aabb.Min.Z && playerPos.Z < aabb.Max.Z;
+            if (inside)
+            {
+                var cp = node.Transform.WorldMatrix.Translation;
+                if (Vector3.Distance(cp, _lastCheckpoint) > 0.5f)
+                {
+                    _lastCheckpoint = cp;
+                    _triggerMessage = $"Checkpoint: {node.Name}";
+                    _triggerMessageTimer = 2f;
+                }
+            }
+        }
+    }
+
+    private void UpdateNPCs()
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.NPC || !node.Visible) continue;
+            var pos = node.Transform.WorldMatrix.Translation;
+            if (Vector3.Distance(playerPos, pos) < 3f)
+            {
+                _triggerMessage = node.Name;
+                _triggerMessageTimer = 0.5f;
+                return;
+            }
+        }
+    }
+
+    private void UpdateDamageZones(float dt)
+    {
+        _damageZoneCooldown = MathF.Max(0, _damageZoneCooldown - dt);
+        if (_damageZoneCooldown > 0 || _playerHealth <= 0) return;
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.DamageZone || !node.Visible) continue;
+            var aabb = FpsCamera.ComputeWorldAABB(node.Transform.WorldMatrix);
+            bool inside = playerPos.X > aabb.Min.X && playerPos.X < aabb.Max.X
+                       && playerPos.Y > aabb.Min.Y && playerPos.Y < aabb.Max.Y + 1.8f
+                       && playerPos.Z > aabb.Min.Z && playerPos.Z < aabb.Max.Z;
+            if (inside) { _playerHealth = Math.Max(0, _playerHealth - 5); _damageZoneCooldown = 0.3f; return; }
+        }
+    }
+
+    private void UpdateHealthPickups()
+    {
+        if (_playerHealth >= 100) return;
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.HealthPickup || !node.Visible) continue;
+            if (_collectedIds.Contains(node.Id)) continue;
+            var pos = node.Transform.WorldMatrix.Translation;
+            if (Vector3.Distance(playerPos, pos) < 1.5f)
+            {
+                _playerHealth = Math.Min(100, _playerHealth + 25);
+                node.Visible = false;
+                _collectedIds.Add(node.Id);
+                _triggerMessage = "+25 HP";
+                _triggerMessageTimer = 1.5f;
+            }
+        }
+    }
+
+    private void ExecuteScripts(float dt)
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var (id, data) in _scriptData)
+        {
+            var node = _scene.FindById(id);
+            if (node is null || !node.Visible) continue;
+            ScriptEngine.Execute(node, data.cmds, data.state, data.startPos, dt, _playTime, playerPos, _scene,
+                (msg, dur) => { _triggerMessage = msg; _triggerMessageTimer = dur; });
+        }
+    }
+
+    private void UpdateMovingPlatforms(float dt)
+    {
+        foreach (var node in _scene.GetAllNodes())
+        {
+            if (node.Tag != NodeTag.MovingPlatform || !node.Visible) continue;
+            if (!_playModeSnapshot.TryGetValue(node.Id, out var snap)) continue;
+            var startPos = snap.pos;
+            var endPos = node.MoveTarget;
+            if (Vector3.DistanceSquared(startPos, endPos) < 0.01f) continue;
+            float t = (MathF.Sin(_playTime * 1.5f) + 1f) * 0.5f;
+            node.Transform.Position = Vector3.Lerp(startPos, endPos, t);
+        }
+    }
+
+    // --- Grid snap ---
+
+    private Vector3 SnapPosition(Vector3 pos)
+    {
+        if (!_snapEnabled || _snapSize <= 0) return pos;
+        return new Vector3(
+            MathF.Round(pos.X / _snapSize) * _snapSize,
+            MathF.Round(pos.Y / _snapSize) * _snapSize,
+            MathF.Round(pos.Z / _snapSize) * _snapSize);
+    }
+
+    private float SnapValue(float val)
+    {
+        if (!_snapEnabled || _snapSize <= 0) return val;
+        return MathF.Round(val / _snapSize) * _snapSize;
+    }
+
+    private string _selectedTemplate = "Platformer";
+    private static readonly string[] SceneTemplates = ["Empty", "Sandbox", "Platformer", "Arena"];
+
+    private void LoadTemplate(string template)
+    {
+        // Clear scene
+        while (_scene.Roots.Count > 0) _scene.Remove(_scene.Roots[0]);
+        ClearSelection();
+        _undo.Clear();
+        _nodeCounter = 0;
+
+        switch (template)
+        {
+            case "Sandbox": SetupSandbox(); break;
+            case "Platformer": SetupPlatformer(); break;
+            case "Arena": SetupArena(); break;
+            // "Empty" — just a light
+        }
+
+        // Every template gets a light
+        AddLightNode(new Vector3(0, 5f, 0), new Vector3(1f, 0.95f, 0.85f), 4f, 20f);
+    }
+
+    private Task SetupDefaultScene() { LoadTemplate(_selectedTemplate); return Task.CompletedTask; }
+
+    private void SetupSandbox()
+    {
+        AddBox("Floor", new Vector3(0, -0.25f, 0), new Vector3(20, 0.5f, 20), new Vector4(0.45f, 0.45f, 0.45f, 1));
+        AddBox("Cube 1", new Vector3(-2.5f, 0.5f, 0), Vector3.One, PaletteColors[1]);
+        AddBox("Cube 2", new Vector3(0, 0.5f, 0), Vector3.One, PaletteColors[2]);
+        AddBox("Cube 3", new Vector3(2.5f, 0.5f, 0), Vector3.One, PaletteColors[3]);
+        AddSphere("Sphere", new Vector3(0, 1.5f, -3), new Vector3(0.8f), PaletteColors[4]);
+    }
+
+    private void SetupPlatformer()
+    {
+        // Start platform
+        AddBox("Start", new Vector3(0, 0, 0), new Vector3(4, 0.5f, 4), new Vector4(0.4f, 0.5f, 0.4f, 1));
+
+        // Stepping stones — ascending path
+        AddBox("Step 1", new Vector3(4, 0.5f, 0), new Vector3(2, 0.5f, 2), new Vector4(0.5f, 0.45f, 0.35f, 1));
+        AddBox("Step 2", new Vector3(7, 1.5f, 0), new Vector3(2, 0.5f, 2), new Vector4(0.5f, 0.45f, 0.35f, 1));
+        AddBox("Step 3", new Vector3(10, 2.5f, -1), new Vector3(2, 0.5f, 2), new Vector4(0.5f, 0.45f, 0.35f, 1));
+        AddBox("Step 4", new Vector3(10, 3.5f, -4), new Vector3(2, 0.5f, 2), new Vector4(0.5f, 0.45f, 0.35f, 1));
+
+        // Upper platform with collectibles
+        AddBox("Upper Platform", new Vector3(7, 4.5f, -7), new Vector3(6, 0.5f, 4), new Vector4(0.35f, 0.45f, 0.55f, 1));
+
+        // Side path — narrow bridge
+        AddBox("Bridge", new Vector3(0, 1f, -5), new Vector3(8, 0.3f, 1), new Vector4(0.6f, 0.55f, 0.4f, 1));
+        AddBox("Bridge End", new Vector3(-5, 1f, -5), new Vector3(3, 0.5f, 3), new Vector4(0.45f, 0.5f, 0.5f, 1));
+
+        // Walls to jump over
+        AddBox("Wall 1", new Vector3(2, 0.75f, 3), new Vector3(0.5f, 1.5f, 3), new Vector4(0.55f, 0.35f, 0.3f, 1));
+
+        // Collectible gems on platforms
+        AddCollectible("Gem 1", new Vector3(7, 2.3f, 0), PaletteColors[4]);
+        AddCollectible("Gem 2", new Vector3(10, 3.3f, -1), PaletteColors[5]);
+        AddCollectible("Gem 3", new Vector3(10, 4.3f, -4), PaletteColors[6]);
+        AddCollectible("Gem 4", new Vector3(7, 5.3f, -7), PaletteColors[7]);
+        AddCollectible("Gem 5", new Vector3(-5, 1.8f, -5), PaletteColors[1]);
+
+        // Enemy patrolling below
+        AddEnemy("Guard", new Vector3(5, 0.5f, 3));
+
+        // Win zone at the top
+        AddTrigger("WinZone", new Vector3(7, 5.5f, -7), new Vector3(4, 2, 4));
+
+        // Extra lights
+        AddLightNode(new Vector3(10, 6f, -4), new Vector3(0.5f, 0.7f, 1f), 2.5f, 15f);
+        AddLightNode(new Vector3(-5, 3f, -5), new Vector3(1f, 0.6f, 0.3f), 2f, 10f);
+    }
+
+    private void SetupArena()
+    {
+        // Floor
+        AddBox("Floor", new Vector3(0, -0.25f, 0), new Vector3(16, 0.5f, 16), new Vector4(0.35f, 0.35f, 0.38f, 1));
+
+        // Walls
+        AddBox("North Wall", new Vector3(0, 1.5f, -8), new Vector3(16, 3, 0.5f), new Vector4(0.5f, 0.4f, 0.35f, 1));
+        AddBox("South Wall", new Vector3(0, 1.5f, 8), new Vector3(16, 3, 0.5f), new Vector4(0.5f, 0.4f, 0.35f, 1));
+        AddBox("East Wall", new Vector3(8, 1.5f, 0), new Vector3(0.5f, 3, 16), new Vector4(0.5f, 0.4f, 0.35f, 1));
+        AddBox("West Wall", new Vector3(-8, 1.5f, 0), new Vector3(0.5f, 3, 16), new Vector4(0.5f, 0.4f, 0.35f, 1));
+
+        // Cover blocks
+        AddBox("Cover 1", new Vector3(-3, 0.75f, -3), new Vector3(2, 1.5f, 2), new Vector4(0.4f, 0.45f, 0.4f, 1));
+        AddBox("Cover 2", new Vector3(3, 0.75f, 3), new Vector3(2, 1.5f, 2), new Vector4(0.4f, 0.45f, 0.4f, 1));
+        AddBox("Cover 3", new Vector3(4, 0.75f, -4), new Vector3(1.5f, 1.5f, 1.5f), new Vector4(0.45f, 0.4f, 0.4f, 1));
+
+        // Enemies in corners
+        AddEnemy("Enemy 1", new Vector3(6, 0.5f, -6));
+        AddEnemy("Enemy 2", new Vector3(-6, 0.5f, 6));
+        AddEnemy("Enemy 3", new Vector3(-6, 0.5f, -6));
+
+        // Collectibles scattered
+        AddCollectible("Health 1", new Vector3(0, 0.5f, 0), new Vector4(0.2f, 0.9f, 0.3f, 1));
+        AddCollectible("Health 2", new Vector3(5, 0.5f, 0), new Vector4(0.2f, 0.9f, 0.3f, 1));
+        AddCollectible("Health 3", new Vector3(-5, 0.5f, 0), new Vector4(0.2f, 0.9f, 0.3f, 1));
+
+        // Colored lights
+        AddLightNode(new Vector3(-4, 4f, -4), new Vector3(1f, 0.3f, 0.2f), 3f, 12f);
+        AddLightNode(new Vector3(4, 4f, 4), new Vector3(0.2f, 0.4f, 1f), 3f, 12f);
+    }
+
+    // --- Scene building helpers ---
+
+    private SceneNode AddBox(string name, Vector3 pos, Vector3 scale, Vector4 color)
+    {
+        var node = new SceneNode($"{name}") { MeshBuffers = _cubeMesh, MeshType = "Cube", Color = color };
+        node.Transform.Position = pos;
+        node.Transform.Scale = scale;
+        _scene.Add(node);
+        _nodeCounter++;
+        return node;
+    }
+
+    private SceneNode AddSphere(string name, Vector3 pos, Vector3 scale, Vector4 color)
+    {
+        var node = new SceneNode($"{name}") { MeshBuffers = _sphereMesh, MeshType = "Sphere", Color = color };
+        node.Transform.Position = pos;
+        node.Transform.Scale = scale;
+        _scene.Add(node);
+        _nodeCounter++;
+        return node;
+    }
+
+    private void AddCollectible(string name, Vector3 pos, Vector4 color)
+    {
+        var node = new SceneNode($"{name}") { MeshBuffers = _sphereMesh, MeshType = "Sphere", Tag = NodeTag.Collectible, Color = color };
+        node.Transform.Position = pos;
+        node.Transform.Scale = new Vector3(0.4f);
+        _scene.Add(node);
+        _nodeCounter++;
+    }
+
+    private void AddEnemy(string name, Vector3 pos)
+    {
+        var node = new SceneNode($"{name}") { MeshBuffers = _cubeMesh, MeshType = "Cube", Tag = NodeTag.Enemy, Color = new Vector4(0.9f, 0.15f, 0.1f, 1) };
+        node.Transform.Position = pos;
+        _scene.Add(node);
+        _nodeCounter++;
+    }
+
+    private void AddTrigger(string name, Vector3 pos, Vector3 scale)
+    {
+        var node = new SceneNode($"{name}") { MeshBuffers = _cubeMesh, MeshType = "Cube", Tag = NodeTag.Trigger, Color = new Vector4(0.2f, 0.9f, 0.4f, 0.5f), Solid = false };
+        node.Transform.Position = pos;
+        node.Transform.Scale = scale;
+        _scene.Add(node);
+        _nodeCounter++;
+    }
+
+    private void AddLightNode(Vector3 pos, Vector3 color, float intensity, float range)
+    {
+        var node = new SceneNode($"Light {++_nodeCounter}")
+        {
+            MeshBuffers = _lightMesh, MeshType = "Light",
+            Color = new Vector4(color.X, color.Y, color.Z, 1f),
+            Light = new PointLightData { Color = color, Intensity = intensity, Range = range },
+        };
+        node.Transform.Position = pos;
+        node.Transform.Scale = new Vector3(0.2f);
+        _scene.Add(node);
+    }
+
+    private void AddPrimitive(PrimitiveType type)
+    {
+        var name = $"{type} {++_nodeCounter}";
+        var node = new SceneNode(name)
+        {
+            MeshBuffers = ResolveMesh(type.ToString()),
+            MeshType = type.ToString(),
+            Color = PaletteColors[_nodeCounter % PaletteColors.Length],
+        };
+        node.Transform.Position = SnapPosition(new Vector3(0, 0.5f, 0));
+        _undo.Do(new AddNodeAction(_scene, node));
+        SelectSingle(node);
+    }
+
+    private MeshBuffers? ResolveMesh(string? meshType) => meshType switch
+    {
+        "Cube" => _cubeMesh,
+        "Sphere" => _sphereMesh,
+        "Plane" => _planeMesh,
+        "Cylinder" => _cylinderMesh,
+        "Light" => _lightMesh,
+        _ => null,
+    };
+
+    private MeshBuffers? ResolveMeshFull(string meshType, byte[]? importedData, string? importedFileName)
+    {
+        if (meshType == "Imported" && importedData is not null && importedFileName is not null)
+            return CreateImportedMeshBuffers(importedData, importedFileName).GetAwaiter().GetResult();
+        return ResolveMesh(meshType);
+    }
+
+    // --- Keyboard shortcuts ---
+
+    private const float NudgeAmount = 0.25f;
+
+    private void ProcessShortcuts(InputState input)
+    {
+        foreach (var key in input.KeyDownEvents)
+        {
+            switch (key)
+            {
+                // Delete selected nodes
+                case "Delete" or "Backspace":
+                    DeleteSelected();
+                    break;
+
+                // Ctrl+D — duplicate selected
+                case "KeyD" when input.CtrlKey:
+                    DuplicateSelected();
+                    break;
+
+                // Ctrl+A — select all
+                case "KeyA" when input.CtrlKey:
+                    SelectAll();
+                    break;
+
+                // F — focus camera on selected node
+                case "KeyF":
+                    if (_scene.SelectedNode is { } toFocus)
+                    {
+                        _scene.UpdateTransforms();
+                        _camera.FocusOn(toFocus.Transform.WorldMatrix.Translation);
+                    }
+                    else
+                    {
+                        _camera.FocusOn(Vector3.Zero);
+                    }
+                    break;
+
+                // Ctrl+Z — undo
+                case "KeyZ" when input.CtrlKey && !input.ShiftKey:
+                    _undo.Undo();
+                    break;
+
+                // Ctrl+Y or Ctrl+Shift+Z — redo
+                case "KeyY" when input.CtrlKey:
+                case "KeyZ" when input.CtrlKey && input.ShiftKey:
+                    _undo.Redo();
+                    break;
+
+                // W/E/R — switch gizmo mode
+                case "KeyW" when !input.CtrlKey:
+                    _renderer!.Gizmo!.Mode = GizmoMode.Translate;
+                    break;
+                case "KeyE" when !input.CtrlKey:
+                    _renderer!.Gizmo!.Mode = GizmoMode.Rotate;
+                    break;
+                case "KeyR" when !input.CtrlKey:
+                    _renderer!.Gizmo!.Mode = GizmoMode.Scale;
+                    break;
+
+                // G — toggle grid snap
+                case "KeyG" when !input.CtrlKey:
+                    _snapEnabled = !_snapEnabled;
+                    break;
+
+                // Ctrl+1-4 — save camera bookmark; 1-4 — recall
+                case "Digit1" when input.CtrlKey: _cameraBookmarks[0] = (_camera.Yaw, _camera.Pitch, _camera.Distance, _camera.Target); break;
+                case "Digit2" when input.CtrlKey: _cameraBookmarks[1] = (_camera.Yaw, _camera.Pitch, _camera.Distance, _camera.Target); break;
+                case "Digit3" when input.CtrlKey: _cameraBookmarks[2] = (_camera.Yaw, _camera.Pitch, _camera.Distance, _camera.Target); break;
+                case "Digit4" when input.CtrlKey: _cameraBookmarks[3] = (_camera.Yaw, _camera.Pitch, _camera.Distance, _camera.Target); break;
+
+                case "Digit1" when !input.CtrlKey && _cameraBookmarks[0].HasValue:
+                    var b0 = _cameraBookmarks[0]!.Value; _camera.Yaw = b0.yaw; _camera.Pitch = b0.pitch; _camera.Distance = b0.distance; _camera.Target = b0.target; break;
+                case "Digit2" when !input.CtrlKey && _cameraBookmarks[1].HasValue:
+                    var b1 = _cameraBookmarks[1]!.Value; _camera.Yaw = b1.yaw; _camera.Pitch = b1.pitch; _camera.Distance = b1.distance; _camera.Target = b1.target; break;
+                case "Digit3" when !input.CtrlKey && _cameraBookmarks[2].HasValue:
+                    var b2 = _cameraBookmarks[2]!.Value; _camera.Yaw = b2.yaw; _camera.Pitch = b2.pitch; _camera.Distance = b2.distance; _camera.Target = b2.target; break;
+                case "Digit4" when !input.CtrlKey && _cameraBookmarks[3].HasValue:
+                    var b3 = _cameraBookmarks[3]!.Value; _camera.Yaw = b3.yaw; _camera.Pitch = b3.pitch; _camera.Distance = b3.distance; _camera.Target = b3.target; break;
+
+                // Ctrl+C — copy selected
+                case "KeyC" when input.CtrlKey:
+                    _clipboard.Clear();
+                    foreach (var node in GetSelectedNodes())
+                        _clipboard.Add((node.Name, node.MeshType, node.MaterialPreset, node.Tag, node.Solid, node.Visible, node.Color, node.Transform.Position, node.Transform.Rotation, node.Transform.Scale, node.Light is { } l ? new PointLightData { Color = l.Color, Intensity = l.Intensity, Range = l.Range } : null, node.ImportedMeshData, node.ImportedMeshFileName));
+                    break;
+
+                // Ctrl+V — paste copied
+                case "KeyV" when input.CtrlKey && _clipboard.Count > 0:
+                    _selectedIds.Clear();
+                    SceneNode? lastPasted = null;
+                    foreach (var c in _clipboard)
+                    {
+                        var node = new SceneNode(c.name + " (paste)") { MeshBuffers = ResolveMesh(c.meshType), MeshType = c.meshType, MaterialPreset = c.materialPreset, Tag = c.tag, Solid = c.solid, Visible = c.visible, Color = c.color, Light = c.light, ImportedMeshData = c.importedData, ImportedMeshFileName = c.importedFileName };
+                        node.Transform.Position = c.pos + new Vector3(1, 0, 1);
+                        node.Transform.Rotation = c.rot;
+                        node.Transform.Scale = c.scale;
+                        if (c.meshType == "Imported" && c.importedData != null && c.importedFileName != null)
+                            node.MeshBuffers = ResolveMeshFull("Imported", c.importedData, c.importedFileName);
+                        _undo.Do(new AddNodeAction(_scene, node));
+                        _selectedIds.Add(node.Id);
+                        lastPasted = node;
+                    }
+                    _scene.SelectedNode = lastPasted;
+                    break;
+
+                case "F3":
+                    _showStats = !_showStats;
+                    break;
+
+                // Escape — deselect
+                case "Escape":
+                    ClearSelection();
+                    break;
+
+                // Arrow keys — nudge selected node position
+                case "ArrowRight" when _selectedIds.Count > 0:
+                    NudgeSelected(input.ShiftKey ? Vector3.UnitZ : Vector3.UnitX);
+                    break;
+                case "ArrowLeft" when _selectedIds.Count > 0:
+                    NudgeSelected(input.ShiftKey ? -Vector3.UnitZ : -Vector3.UnitX);
+                    break;
+                case "ArrowUp" when _selectedIds.Count > 0:
+                    NudgeSelected(input.ShiftKey ? Vector3.UnitY : -Vector3.UnitZ);
+                    break;
+                case "ArrowDown" when _selectedIds.Count > 0:
+                    NudgeSelected(input.ShiftKey ? -Vector3.UnitY : Vector3.UnitZ);
+                    break;
+            }
+        }
+    }
+
+    private void NudgeSelected(Vector3 direction)
+    {
+        float step = _snapEnabled ? _snapSize : NudgeAmount;
+        var delta = direction * step;
+        foreach (var node in GetSelectedNodes())
+        {
+            if (node.Locked) continue;
+            var oldPos = node.Transform.Position;
+            var newPos = oldPos + delta;
+            if (_snapEnabled) newPos = SnapPosition(newPos);
+            _undo.Do(TransformAction.Move(node, oldPos, newPos));
+        }
+    }
+
+    // --- Gizmo interaction ---
+
+    private bool _gizmoDragging;
+    private Vector3 _gizmoDragStartPos;
+    private Quaternion _gizmoDragStartRot;
+    private Vector3 _gizmoDragStartScale;
+    // For multi-select group move: start positions of all selected nodes
+    private Dictionary<int, (Vector3 pos, Quaternion rot, Vector3 scale)> _groupDragStarts = new();
+
+    private bool ProcessGizmo(InputState input, GpuCanvas canvas, TranslateGizmo gizmo)
+    {
+        if (_selectedIds.Count == 0 || _scene.SelectedNode is not { } selected)
+        {
+            gizmo.HoveredAxis = GizmoAxis.None;
+            return false;
+        }
+
+        if (selected.Locked) { gizmo.HoveredAxis = GizmoAxis.None; return false; }
+
+        _scene.UpdateTransforms();
+        var gizmoPos = selected.Transform.WorldMatrix.Translation;
+        float camDist = Vector3.Distance(_camera.Position, gizmoPos);
+
+        // Handle ongoing drag
+        if (_gizmoDragging)
+        {
+            if (!input.LeftMouseDown)
+            {
+                // Mouse released — end drag, record undo action
+                gizmo.EndDrag();
+                _gizmoDragging = false;
+                _ = JS.InvokeVoidAsync("WgpuSharp.setPointerLockBlocked", false);
+
+                // Record undo for all nodes that moved
+                foreach (var (id, start) in _groupDragStarts)
+                {
+                    var node = _scene.FindById(id);
+                    if (node is null) continue;
+                    var t = node.Transform;
+                    if (t.Position != start.pos || t.Rotation != start.rot || t.Scale != start.scale)
+                    {
+                        _undo.Push(new TransformAction(node,
+                            start.pos, start.rot, start.scale,
+                            t.Position, t.Rotation, t.Scale));
+                    }
+                }
+                return false;
+            }
+
+            // Update drag using current mouse
+            var ray = Picking.ScreenPointToRay(
+                input.MouseX, input.MouseY,
+                canvas.Width, canvas.Height,
+                _camera.ViewMatrix, _camera.ProjectionMatrix(canvas.AspectRatio));
+
+            switch (gizmo.Mode)
+            {
+                case GizmoMode.Translate:
+                    var newPos = SnapPosition(gizmo.UpdateTranslateDrag(ray));
+                    var moveDelta = newPos - _gizmoDragStartPos;
+                    foreach (var (id, start) in _groupDragStarts)
+                    {
+                        var n = _scene.FindById(id);
+                        if (n is not null) n.Transform.Position = SnapPosition(start.pos + moveDelta);
+                    }
+                    break;
+                case GizmoMode.Rotate:
+                    var newRot = gizmo.UpdateRotateDrag(ray);
+                    if (_snapEnabled)
+                    {
+                        // Snap to 15-degree increments
+                        var euler = selected.Transform.EulerAngles;
+                        // Get the euler from the new rotation
+                        var tempTransform = new Transform();
+                        tempTransform.Rotation = newRot;
+                        var newEuler = tempTransform.EulerAngles;
+                        float snapRad = 15f * MathF.PI / 180f;
+                        newEuler = new Vector3(
+                            MathF.Round(newEuler.X / snapRad) * snapRad,
+                            MathF.Round(newEuler.Y / snapRad) * snapRad,
+                            MathF.Round(newEuler.Z / snapRad) * snapRad);
+                        tempTransform.EulerAngles = newEuler;
+                        selected.Transform.Rotation = tempTransform.Rotation;
+                    }
+                    else
+                    {
+                        selected.Transform.Rotation = newRot;
+                    }
+                    break;
+                case GizmoMode.Scale:
+                    selected.Transform.Scale = gizmo.UpdateScaleDrag(ray);
+                    break;
+            }
+            return true; // consume input — block camera
+        }
+
+        // Check for mousedown on gizmo axis to start drag
+        foreach (var md in input.MouseDownEvents)
+        {
+            if (md.Button != 0) continue;
+
+            var ray = Picking.ScreenPointToRay(
+                md.X, md.Y,
+                canvas.Width, canvas.Height,
+                _camera.ViewMatrix, _camera.ProjectionMatrix(canvas.AspectRatio));
+
+            var hitAxis = gizmo.HitTest(ray, gizmoPos, camDist);
+            if (hitAxis != GizmoAxis.None)
+            {
+                _gizmoDragStartPos = selected.Transform.Position;
+                _gizmoDragStartRot = selected.Transform.Rotation;
+                _gizmoDragStartScale = selected.Transform.Scale;
+                // Capture start transforms for all selected
+                _groupDragStarts.Clear();
+                foreach (var node in GetSelectedNodes())
+                    _groupDragStarts[node.Id] = (node.Transform.Position, node.Transform.Rotation, node.Transform.Scale);
+                gizmo.BeginDrag(hitAxis, selected.Transform.Position,
+                    selected.Transform.Rotation, selected.Transform.Scale, ray);
+                _gizmoDragging = true;
+                _ = JS.InvokeVoidAsync("WgpuSharp.setPointerLockBlocked", true);
+                return true;
+            }
+        }
+
+        // Update hover highlighting from mouse position
+        if (!input.PointerLocked)
+        {
+            var ray = Picking.ScreenPointToRay(
+                input.MouseX, input.MouseY,
+                canvas.Width, canvas.Height,
+                _camera.ViewMatrix, _camera.ProjectionMatrix(canvas.AspectRatio));
+            gizmo.HoveredAxis = gizmo.HitTest(ray, gizmoPos, camDist);
+        }
+
+        return false;
+    }
+
+    // --- Viewport picking ---
+
+    private void ProcessPicking(InputState input, GpuCanvas canvas)
+    {
+        foreach (var click in input.ClickEvents)
+        {
+            if (click.Button != 0) continue; // left click only
+
+            _scene.UpdateTransforms();
+
+            var ray = Picking.ScreenPointToRay(
+                click.X, click.Y,
+                canvas.Width, canvas.Height,
+                _camera.ViewMatrix,
+                _camera.ProjectionMatrix(canvas.AspectRatio));
+
+            var hit = Picking.PickNode(ray, _scene);
+            if (input.ShiftKey && hit is not null)
+                ToggleSelect(hit.Value.node);
+            else
+                SelectSingle(hit?.node);
+        }
+    }
+
+    private void ProcessBoxSelect(InputState input, GpuCanvas canvas)
+    {
+        foreach (var box in input.BoxSelectEvents)
+        {
+            _scene.UpdateTransforms();
+            var vp = _camera.ViewProjectionMatrix(canvas.AspectRatio);
+            var hits = Picking.BoxSelect(_scene, box.X1, box.Y1, box.X2, box.Y2,
+                canvas.Width, canvas.Height, vp);
+            _selectedIds.Clear();
+            SceneNode? last = null;
+            foreach (var node in hits)
+            {
+                _selectedIds.Add(node.Id);
+                last = node;
+            }
+            _scene.SelectedNode = last;
+        }
+    }
+
+    private void DeleteSelected()
+    {
+        foreach (var node in GetSelectedNodes().Where(n => !n.Locked))
+            _undo.Do(new DeleteNodeAction(_scene, node));
+        ClearSelection();
+    }
+
+    private void DuplicateSelected()
+    {
+        var originals = GetSelectedNodes();
+        if (originals.Count == 0) return;
+
+        _selectedIds.Clear();
+        SceneNode? last = null;
+        foreach (var original in originals)
+        {
+            var dupe = new SceneNode($"{original.Name} (copy)")
+            {
+                MeshBuffers = original.MeshBuffers,
+                MeshType = original.MeshType,
+                Tag = original.Tag,
+                ImportedMeshData = original.ImportedMeshData,
+                ImportedMeshFileName = original.ImportedMeshFileName,
+                Color = original.Color,
+                MaterialPreset = original.MaterialPreset,
+                Visible = original.Visible,
+                Solid = original.Solid,
+                Locked = false,
+                MoveTarget = original.MoveTarget,
+                Script = original.Script,
+                Light = original.Light is { } l ? new PointLightData
+                {
+                    Color = l.Color,
+                    Intensity = l.Intensity,
+                    Range = l.Range,
+                } : null,
+            };
+            dupe.Transform.Position = original.Transform.Position + new Vector3(1, 0, 0);
+            dupe.Transform.Rotation = original.Transform.Rotation;
+            dupe.Transform.Scale = original.Transform.Scale;
+
+            _undo.Do(new AddNodeAction(_scene, dupe, original.Parent));
+            _selectedIds.Add(dupe.Id);
+            last = dupe;
+        }
+        _scene.SelectedNode = last;
+    }
+
+    private void AlignSelected(int axis, bool max)
+    {
+        var nodes = GetSelectedNodes();
+        if (nodes.Count < 2) return;
+        float target = max
+            ? nodes.Max(n => GetAxis(n.Transform.Position, axis))
+            : nodes.Min(n => GetAxis(n.Transform.Position, axis));
+        foreach (var node in nodes)
+        {
+            var oldPos = node.Transform.Position;
+            var newPos = SetAxis(oldPos, axis, target);
+            _undo.Do(TransformAction.Move(node, oldPos, newPos));
+        }
+    }
+
+    private void DistributeSelected(int axis)
+    {
+        var nodes = GetSelectedNodes().OrderBy(n => GetAxis(n.Transform.Position, axis)).ToList();
+        if (nodes.Count < 3) return;
+        float min = GetAxis(nodes[0].Transform.Position, axis);
+        float max = GetAxis(nodes[^1].Transform.Position, axis);
+        float step = (max - min) / (nodes.Count - 1);
+        for (int i = 1; i < nodes.Count - 1; i++)
+        {
+            var oldPos = nodes[i].Transform.Position;
+            var newPos = SetAxis(oldPos, axis, min + step * i);
+            _undo.Do(TransformAction.Move(nodes[i], oldPos, newPos));
+        }
+    }
+
+    private static float GetAxis(Vector3 v, int axis) => axis switch { 0 => v.X, 1 => v.Y, _ => v.Z };
+    private static Vector3 SetAxis(Vector3 v, int axis, float val) => axis switch
+    {
+        0 => v with { X = val },
+        1 => v with { Y = val },
+        _ => v with { Z = val },
+    };
+
+    // --- Property setters ---
+
+    private void SetPosition(SceneNode node, int axis, ChangeEventArgs e)
+    {
+        if (!float.TryParse(e.Value?.ToString(), out float val)) return;
+        val = SnapValue(val);
+        var oldPos = node.Transform.Position;
+        var newPos = axis switch
+        {
+            0 => oldPos with { X = val },
+            1 => oldPos with { Y = val },
+            2 => oldPos with { Z = val },
+            _ => oldPos,
+        };
+        _undo.Do(TransformAction.Move(node, oldPos, newPos));
+    }
+
+    private void SetRotation(SceneNode node, int axis, ChangeEventArgs e)
+    {
+        if (!float.TryParse(e.Value?.ToString(), out float deg)) return;
+        if (_snapEnabled) deg = MathF.Round(deg / 15f) * 15f;
+        var oldRot = node.Transform.Rotation;
+        var oldPos = node.Transform.Position;
+        var oldScale = node.Transform.Scale;
+        var euler = node.Transform.EulerAngles * (180f / MathF.PI);
+        euler = axis switch
+        {
+            0 => euler with { X = deg },
+            1 => euler with { Y = deg },
+            2 => euler with { Z = deg },
+            _ => euler,
+        };
+        var newRot = Quaternion.CreateFromYawPitchRoll(
+            euler.Y * (MathF.PI / 180f), euler.X * (MathF.PI / 180f), euler.Z * (MathF.PI / 180f));
+        _undo.Do(new TransformAction(node, oldPos, oldRot, oldScale, oldPos, newRot, oldScale));
+    }
+
+    private void SetScale(SceneNode node, int axis, ChangeEventArgs e)
+    {
+        if (!float.TryParse(e.Value?.ToString(), out float val)) return;
+        var oldScale = node.Transform.Scale;
+        var oldPos = node.Transform.Position;
+        var oldRot = node.Transform.Rotation;
+        var newScale = axis switch
+        {
+            0 => oldScale with { X = val },
+            1 => oldScale with { Y = val },
+            2 => oldScale with { Z = val },
+            _ => oldScale,
+        };
+        _undo.Do(new TransformAction(node, oldPos, oldRot, oldScale, oldPos, oldRot, newScale));
+    }
+
+    private void ApplyMaterial(SceneNode node, ChangeEventArgs e)
+    {
+        var name = e.Value?.ToString();
+        if (string.IsNullOrEmpty(name))
+        {
+            node.MaterialPreset = null;
+            return;
+        }
+        var preset = MaterialPresets.Find(name);
+        if (preset is null) return;
+        node.MaterialPreset = name;
+        node.Color = preset.Color;
+    }
+
+    private void SetNodeColor(SceneNode node, ChangeEventArgs e)
+    {
+        var hex = e.Value?.ToString() ?? "#ffffff";
+        var oldColor = node.Color;
+        var newColor = HexToColor(hex);
+        _undo.Do(new ColorAction(node, oldColor, newColor));
+    }
+
+    private static string ColorToHex(Vector4 c) =>
+        $"#{(int)(c.X * 255):X2}{(int)(c.Y * 255):X2}{(int)(c.Z * 255):X2}";
+
+    private static Vector4 HexToColor(string hex)
+    {
+        if (hex.StartsWith('#')) hex = hex[1..];
+        if (hex.Length < 6) return Vector4.One;
+        float r = int.Parse(hex[0..2], System.Globalization.NumberStyles.HexNumber) / 255f;
+        float g = int.Parse(hex[2..4], System.Globalization.NumberStyles.HexNumber) / 255f;
+        float b = int.Parse(hex[4..6], System.Globalization.NumberStyles.HexNumber) / 255f;
+        return new Vector4(r, g, b, 1);
+    }
+
+    private static string Vec3ToHex(Vector3 c) =>
+        $"#{(int)(c.X * 255):X2}{(int)(c.Y * 255):X2}{(int)(c.Z * 255):X2}";
+
+    private static Vector3 HexToVec3(ChangeEventArgs e)
+    {
+        var hex = e.Value?.ToString() ?? "#ffffff";
+        if (hex.StartsWith('#')) hex = hex[1..];
+        if (hex.Length < 6) return Vector3.One;
+        return new Vector3(
+            int.Parse(hex[0..2], System.Globalization.NumberStyles.HexNumber) / 255f,
+            int.Parse(hex[2..4], System.Globalization.NumberStyles.HexNumber) / 255f,
+            int.Parse(hex[4..6], System.Globalization.NumberStyles.HexNumber) / 255f);
+    }
+
+    private void SetLightColor(PointLightData light, ChangeEventArgs e)
+    {
+        var hex = e.Value?.ToString() ?? "#ffffff";
+        if (hex.StartsWith('#')) hex = hex[1..];
+        if (hex.Length < 6) return;
+        light.Color = new Vector3(
+            int.Parse(hex[0..2], System.Globalization.NumberStyles.HexNumber) / 255f,
+            int.Parse(hex[2..4], System.Globalization.NumberStyles.HexNumber) / 255f,
+            int.Parse(hex[4..6], System.Globalization.NumberStyles.HexNumber) / 255f);
+    }
+
+    // --- Hierarchy rendering ---
+
+    private IEnumerable<(SceneNode node, int depth)> GetFlatHierarchy()
+    {
+        foreach (var root in _scene.Roots)
+        {
+            foreach (var item in FlattenNode(root, 0))
+                yield return item;
+        }
+    }
+
+    private static IEnumerable<(SceneNode node, int depth)> FlattenNode(SceneNode node, int depth)
+    {
+        yield return (node, depth);
+        foreach (var child in node.Children)
+        {
+            foreach (var item in FlattenNode(child, depth + 1))
+                yield return item;
+        }
+    }
+
+    // --- Save / Load ---
+
+    private async Task TakeScreenshot()
+    {
+        await JS.InvokeVoidAsync("WgpuSharpEditor.captureScreenshot", "gpu-canvas");
+    }
+
+    private async Task SaveScene()
+    {
+        try
+        {
+            var json = SceneSerializer.Serialize(_scene);
+            await JS.InvokeVoidAsync("WgpuSharpEditor.downloadFile", "scene.json", json);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Save failed: {ex.Message}";
+        }
+    }
+
+    private async Task LoadScene()
+    {
+        try
+        {
+            var json = await JS.InvokeAsync<string>("WgpuSharpEditor.pickAndReadFile", ".json");
+            if (string.IsNullOrWhiteSpace(json)) return;
+
+            var data = SceneSerializer.Deserialize(json);
+            SceneSerializer.Rebuild(_scene, data, ResolveMeshFull);
+            _nodeCounter = _scene.GetAllNodes().Count();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Load failed: {ex.Message}";
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_loop is not null) await _loop.DisposeAsync();
+        if (_renderer is not null) await _renderer.DisposeAsync();
+        if (_input is not null) await _input.DisposeAsync();
+    }
+}

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace WgpuSharp.Mesh;
 
@@ -36,84 +37,104 @@ public static class ObjLoader
         var normals = new List<Vector3>();
         var texCoords = new List<Vector2>();
 
-        var vertexMap = new Dictionary<(int p, int t, int n), uint>();
+        // Use a struct key with custom comparer for faster hashing than tuple
+        var vertexMap = new Dictionary<long, uint>();
         var outPositions = new List<Vector3>();
         var outNormals = new List<Vector3>();
         var outTexCoords = new List<Vector2>();
         var outIndices = new List<uint>();
+
+        // Reusable face vertex buffer (avoids per-face allocation)
+        var faceVerts = new uint[16]; // supports up to 16-gon faces
 
         Material? currentMaterial = null;
 
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
-            line = line.Trim();
-            if (line.Length == 0 || line[0] == '#')
-                continue;
+            if (line.Length == 0) continue;
+            var span = line.AsSpan().Trim();
+            if (span.Length == 0 || span[0] == '#') continue;
 
-            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            switch (parts[0])
+            // Fast prefix check without Split
+            if (span.StartsWith("v "))
             {
-                case "mtllib" when parts.Length >= 2 && mtlResolver is not null:
-                    var mtlText = mtlResolver(parts[1]);
-                    if (mtlText is not null)
-                        materials = MtlLoader.Load(mtlText);
-                    break;
+                var rest = span[2..];
+                positions.Add(new Vector3(
+                    NextFloat(ref rest),
+                    NextFloat(ref rest),
+                    NextFloat(ref rest)));
+            }
+            else if (span.StartsWith("vn "))
+            {
+                var rest = span[3..];
+                normals.Add(new Vector3(
+                    NextFloat(ref rest),
+                    NextFloat(ref rest),
+                    NextFloat(ref rest)));
+            }
+            else if (span.StartsWith("vt "))
+            {
+                var rest = span[3..];
+                texCoords.Add(new Vector2(
+                    NextFloat(ref rest),
+                    NextFloat(ref rest)));
+            }
+            else if (span.StartsWith("f "))
+            {
+                var rest = span[2..];
+                int faceCount = 0;
+                int posCount = positions.Count;
+                int texCount = texCoords.Count;
+                int normCount = normals.Count;
 
-                case "usemtl" when parts.Length >= 2 && materials is not null:
-                    materials.TryGetValue(parts[1], out currentMaterial);
-                    break;
+                while (rest.Length > 0)
+                {
+                    var token = NextToken(ref rest);
+                    if (token.Length == 0) continue;
 
-                case "v" when parts.Length >= 4:
-                    positions.Add(new Vector3(
-                        ParseFloat(parts[1]),
-                        ParseFloat(parts[2]),
-                        ParseFloat(parts[3])));
-                    break;
+                    var idx = ParseFaceVertexSpan(token, posCount, texCount, normCount);
+                    // Pack (p, t, n) into a single long for fast dictionary lookup
+                    long key = ((long)(idx.p + 1) << 40) | ((long)(idx.t + 2) << 20) | (long)(idx.n + 2);
 
-                case "vn" when parts.Length >= 4:
-                    normals.Add(new Vector3(
-                        ParseFloat(parts[1]),
-                        ParseFloat(parts[2]),
-                        ParseFloat(parts[3])));
-                    break;
-
-                case "vt" when parts.Length >= 3:
-                    texCoords.Add(new Vector2(
-                        ParseFloat(parts[1]),
-                        ParseFloat(parts[2])));
-                    break;
-
-                case "f":
-                    var faceVerts = new List<uint>();
-                    for (int i = 1; i < parts.Length; i++)
+                    if (!vertexMap.TryGetValue(key, out uint vertexIndex))
                     {
-                        var idx = ParseFaceVertex(parts[i], positions.Count, texCoords.Count, normals.Count);
-                        var key = (idx.p, idx.t, idx.n);
+                        vertexIndex = (uint)outPositions.Count;
+                        vertexMap[key] = vertexIndex;
 
-                        if (!vertexMap.TryGetValue(key, out uint vertexIndex))
-                        {
-                            vertexIndex = (uint)outPositions.Count;
-                            vertexMap[key] = vertexIndex;
+                        outPositions.Add(positions[idx.p]);
 
-                            outPositions.Add(positions[idx.p]);
+                        if (idx.n >= 0 && idx.n < normals.Count)
+                            outNormals.Add(normals[idx.n]);
 
-                            if (idx.n >= 0 && idx.n < normals.Count)
-                                outNormals.Add(normals[idx.n]);
-
-                            if (idx.t >= 0 && idx.t < texCoords.Count)
-                                outTexCoords.Add(texCoords[idx.t]);
-                        }
-                        faceVerts.Add(vertexIndex);
+                        if (idx.t >= 0 && idx.t < texCoords.Count)
+                            outTexCoords.Add(texCoords[idx.t]);
                     }
 
-                    for (int i = 1; i < faceVerts.Count - 1; i++)
-                    {
-                        outIndices.Add(faceVerts[0]);
-                        outIndices.Add(faceVerts[i]);
-                        outIndices.Add(faceVerts[i + 1]);
-                    }
-                    break;
+                    if (faceCount < faceVerts.Length)
+                        faceVerts[faceCount] = vertexIndex;
+                    faceCount++;
+                }
+
+                // Triangulate face (fan from first vertex)
+                for (int i = 1; i < faceCount - 1; i++)
+                {
+                    outIndices.Add(faceVerts[0]);
+                    outIndices.Add(faceVerts[i]);
+                    outIndices.Add(faceVerts[i + 1]);
+                }
+            }
+            else if (span.StartsWith("mtllib ") && mtlResolver is not null)
+            {
+                var mtlName = span[7..].Trim().ToString();
+                var mtlText = mtlResolver(mtlName);
+                if (mtlText is not null)
+                    materials = MtlLoader.Load(mtlText);
+            }
+            else if (span.StartsWith("usemtl ") && materials is not null)
+            {
+                var matName = span[7..].Trim().ToString();
+                materials.TryGetValue(matName, out currentMaterial);
             }
         }
 
@@ -127,21 +148,62 @@ public static class ObjLoader
         };
     }
 
-    private static (int p, int t, int n) ParseFaceVertex(string s, int posCount, int texCount, int normCount)
+    // --- Span-based zero-allocation parsers ---
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static ReadOnlySpan<char> NextToken(ref ReadOnlySpan<char> span)
     {
-        var parts = s.Split('/');
-        int p = ParseIndex(parts[0], posCount);
-        int t = parts.Length > 1 && parts[1].Length > 0 ? ParseIndex(parts[1], texCount) : -1;
-        int n = parts.Length > 2 && parts[2].Length > 0 ? ParseIndex(parts[2], normCount) : -1;
-        return (p, t, n);
+        // Skip leading whitespace
+        int start = 0;
+        while (start < span.Length && span[start] == ' ') start++;
+        if (start >= span.Length) { span = ReadOnlySpan<char>.Empty; return ReadOnlySpan<char>.Empty; }
+
+        // Find end of token
+        int end = start;
+        while (end < span.Length && span[end] != ' ') end++;
+
+        var token = span[start..end];
+        span = end < span.Length ? span[(end + 1)..] : ReadOnlySpan<char>.Empty;
+        return token;
     }
 
-    private static int ParseIndex(string s, int count)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float NextFloat(ref ReadOnlySpan<char> span)
     {
-        int idx = int.Parse(s, CultureInfo.InvariantCulture);
+        var token = NextToken(ref span);
+        float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out float val);
+        return val;
+    }
+
+    private static (int p, int t, int n) ParseFaceVertexSpan(ReadOnlySpan<char> s, int posCount, int texCount, int normCount)
+    {
+        int slash1 = s.IndexOf('/');
+        if (slash1 < 0)
+        {
+            int p = ParseIndexSpan(s, posCount);
+            return (p, -1, -1);
+        }
+
+        int pIdx = ParseIndexSpan(s[..slash1], posCount);
+        var rest = s[(slash1 + 1)..];
+
+        int slash2 = rest.IndexOf('/');
+        if (slash2 < 0)
+        {
+            int tIdx = rest.Length > 0 ? ParseIndexSpan(rest, texCount) : -1;
+            return (pIdx, tIdx, -1);
+        }
+
+        int t = slash2 > 0 ? ParseIndexSpan(rest[..slash2], texCount) : -1;
+        var nPart = rest[(slash2 + 1)..];
+        int n = nPart.Length > 0 ? ParseIndexSpan(nPart, normCount) : -1;
+        return (pIdx, t, n);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int ParseIndexSpan(ReadOnlySpan<char> s, int count)
+    {
+        int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out int idx);
         return idx < 0 ? count + idx : idx - 1;
     }
-
-    private static float ParseFloat(string s)
-        => float.Parse(s, CultureInfo.InvariantCulture);
 }

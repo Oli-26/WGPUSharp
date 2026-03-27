@@ -1,0 +1,201 @@
+using System.Numerics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace WgpuSharp.Scene;
+
+/// <summary>
+/// Serializes and deserializes a <see cref="Scene"/> to/from JSON.
+/// Stores node hierarchy, transforms, mesh types, colors, and visibility.
+/// GPU resources (mesh buffers) are not serialized — they are recreated from <see cref="SceneNode.MeshType"/>.
+/// </summary>
+public static class SceneSerializer
+{
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    /// <summary>Serialize a scene to JSON.</summary>
+    public static string Serialize(Scene scene)
+    {
+        var data = new SceneData
+        {
+            Version = 1,
+            Nodes = scene.Roots.Select(SerializeNode).ToArray(),
+        };
+        return JsonSerializer.Serialize(data, JsonOpts);
+    }
+
+    /// <summary>
+    /// Deserialize scene nodes from JSON.
+    /// Returns a list of root-level node data. Use <see cref="Rebuild"/> to recreate the scene.
+    /// </summary>
+    public static SceneData Deserialize(string json)
+    {
+        return JsonSerializer.Deserialize<SceneData>(json, JsonOpts)
+               ?? throw new JsonException("Failed to parse scene JSON.");
+    }
+
+    /// <summary>
+    /// Rebuild a scene from deserialized data and a mesh resolver.
+    /// The mesh resolver maps a mesh type string to GPU mesh buffers.
+    /// </summary>
+    public static void Rebuild(Scene scene, SceneData data, Func<string, byte[]?, string?, Mesh.MeshBuffers?> meshResolver)
+    {
+        // Clear existing scene
+        while (scene.Roots.Count > 0)
+            scene.Remove(scene.Roots[0]);
+        scene.SelectedNode = null;
+
+        foreach (var nodeData in data.Nodes)
+        {
+            var node = RebuildNode(nodeData, meshResolver);
+            scene.Add(node);
+        }
+    }
+
+    private static NodeData SerializeNode(SceneNode node)
+    {
+        return new NodeData
+        {
+            Name = node.Name,
+            MeshType = node.MeshType,
+            MaterialPreset = node.MaterialPreset,
+            Tag = node.Tag == NodeTag.Static ? null : node.Tag.ToString(),
+            Visible = node.Visible ? null : false, // only store if non-default
+            Solid = node.Solid ? null : false, // only store if non-default
+            Locked = node.Locked ? true : null,
+            Script = node.Script,
+            Color = node.Color == Vector4.One ? null : new[] { node.Color.X, node.Color.Y, node.Color.Z, node.Color.W },
+            Position = IsZero(node.Transform.Position) ? null : Vec3(node.Transform.Position),
+            Rotation = IsIdentity(node.Transform.Rotation) ? null : Quat(node.Transform.Rotation),
+            Scale = IsOne(node.Transform.Scale) ? null : Vec3(node.Transform.Scale),
+            MoveTarget = IsZero(node.MoveTarget) ? null : Vec3(node.MoveTarget),
+            ImportedMeshData = node.ImportedMeshData is not null ? Convert.ToBase64String(node.ImportedMeshData) : null,
+            ImportedMeshFileName = node.ImportedMeshFileName,
+            Light = node.Light is { } l ? new LightNodeData
+            {
+                Color = new[] { l.Color.X, l.Color.Y, l.Color.Z },
+                Intensity = l.Intensity,
+                Range = l.Range,
+            } : null,
+            Children = node.Children.Count > 0 ? node.Children.Select(SerializeNode).ToArray() : null,
+        };
+    }
+
+    private static SceneNode RebuildNode(NodeData data, Func<string, byte[]?, string?, Mesh.MeshBuffers?> meshResolver)
+    {
+        var node = new SceneNode(data.Name ?? "Node");
+
+        if (data.ImportedMeshData is not null)
+        {
+            node.ImportedMeshData = Convert.FromBase64String(data.ImportedMeshData);
+            node.ImportedMeshFileName = data.ImportedMeshFileName;
+        }
+
+        if (data.MeshType is not null)
+        {
+            node.MeshType = data.MeshType;
+            node.MeshBuffers = meshResolver(data.MeshType, node.ImportedMeshData, node.ImportedMeshFileName);
+        }
+
+        if (data.MaterialPreset is not null)
+            node.MaterialPreset = data.MaterialPreset;
+
+        if (data.Tag is not null && Enum.TryParse<NodeTag>(data.Tag, out var tag))
+            node.Tag = tag;
+
+        if (data.Visible.HasValue)
+            node.Visible = data.Visible.Value;
+
+        if (data.Solid.HasValue)
+            node.Solid = data.Solid.Value;
+
+        if (data.Locked.HasValue)
+            node.Locked = data.Locked.Value;
+
+        node.Script = data.Script;
+
+        if (data.Color is { Length: >= 4 })
+            node.Color = new Vector4(data.Color[0], data.Color[1], data.Color[2], data.Color[3]);
+
+        if (data.Position is { Length: >= 3 })
+            node.Transform.Position = new Vector3(data.Position[0], data.Position[1], data.Position[2]);
+
+        if (data.Rotation is { Length: >= 4 })
+            node.Transform.Rotation = new Quaternion(data.Rotation[0], data.Rotation[1], data.Rotation[2], data.Rotation[3]);
+
+        if (data.Scale is { Length: >= 3 })
+            node.Transform.Scale = new Vector3(data.Scale[0], data.Scale[1], data.Scale[2]);
+
+        if (data.MoveTarget is { Length: >= 3 })
+            node.MoveTarget = new Vector3(data.MoveTarget[0], data.MoveTarget[1], data.MoveTarget[2]);
+
+        if (data.Light is { } ld)
+        {
+            node.Light = new PointLightData
+            {
+                Color = ld.Color is { Length: >= 3 } ? new Vector3(ld.Color[0], ld.Color[1], ld.Color[2]) : Vector3.One,
+                Intensity = ld.Intensity,
+                Range = ld.Range,
+            };
+        }
+
+        if (data.Children is not null)
+        {
+            foreach (var childData in data.Children)
+            {
+                var child = RebuildNode(childData, meshResolver);
+                node.AddChild(child);
+            }
+        }
+
+        return node;
+    }
+
+    private static float[] Vec3(Vector3 v) => [v.X, v.Y, v.Z];
+    private static float[] Quat(Quaternion q) => [q.X, q.Y, q.Z, q.W];
+    private static bool IsZero(Vector3 v) => v == Vector3.Zero;
+    private static bool IsOne(Vector3 v) => v == Vector3.One;
+    private static bool IsIdentity(Quaternion q) => q == Quaternion.Identity;
+}
+
+/// <summary>Top-level scene file format.</summary>
+public sealed class SceneData
+{
+    public int Version { get; set; } = 1;
+    public NodeData[] Nodes { get; set; } = [];
+}
+
+/// <summary>Serialized node data.</summary>
+public sealed class NodeData
+{
+    public string? Name { get; set; }
+    public string? MeshType { get; set; }
+    public string? MaterialPreset { get; set; }
+    public string? Tag { get; set; }
+    public bool? Visible { get; set; }
+    public bool? Solid { get; set; }
+    public bool? Locked { get; set; }
+    public string? Script { get; set; }
+    public float[]? Color { get; set; }
+    public float[]? Position { get; set; }
+    public float[]? Rotation { get; set; }
+    public float[]? Scale { get; set; }
+    public float[]? MoveTarget { get; set; }
+    public string? ImportedMeshData { get; set; }
+    public string? ImportedMeshFileName { get; set; }
+    public LightNodeData? Light { get; set; }
+    public NodeData[]? Children { get; set; }
+}
+
+/// <summary>Serialized point light data.</summary>
+public sealed class LightNodeData
+{
+    public float[]? Color { get; set; }
+    public float Intensity { get; set; } = 2f;
+    public float Range { get; set; } = 10f;
+}

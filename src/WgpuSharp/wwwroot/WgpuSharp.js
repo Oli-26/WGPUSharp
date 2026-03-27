@@ -39,11 +39,19 @@ function releaseFrameHandles() {
 // Input state
 const inputState = {
     keys: {},
+    keyDownEvents: [],   // keys pressed since last poll (edge-triggered)
+    ctrlKey: false,
+    shiftKey: false,
     mouseX: 0, mouseY: 0,
     mouseDX: 0, mouseDY: 0,
     mouseButtons: 0,
     wheelDelta: 0,
     pointerLocked: false,
+    clickEvents: [],     // [{x, y, button}] — clicks (mouseup with <5px drag)
+    mouseDownEvents: [], // [{x, y, button}] — mousedown on canvas
+    _mouseDownPos: null, // {x, y} at mousedown for drag detection
+    _pointerLockBlocked: false, // set true to prevent pointer lock (e.g. during gizmo drag)
+    boxSelectEvents: [],     // [{x1, y1, x2, y2}] — completed right-drag box selections
     _listeners: null,
 };
 
@@ -716,19 +724,80 @@ window.WgpuSharp = {
         const canvas = document.getElementById(canvasId);
         if (inputState._listeners) return; // already initialized
 
-        const onKeyDown = (e) => { inputState.keys[e.code] = true; };
-        const onKeyUp = (e) => { inputState.keys[e.code] = false; };
+        const onKeyDown = (e) => {
+            inputState.keys[e.code] = true;
+            inputState.ctrlKey = e.ctrlKey || e.metaKey;
+            inputState.shiftKey = e.shiftKey;
+            // Record edge event (only if not in a text input)
+            const tag = e.target?.tagName;
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+                inputState.keyDownEvents.push(e.code);
+                // Prevent browser defaults for editor shortcuts
+                if (e.code === 'Delete' || e.code === 'Backspace' || e.code === 'KeyF' || e.code === 'KeyG' || e.code === 'F3'
+                    || e.code === 'KeyW' || e.code === 'KeyE' || e.code === 'KeyR'
+                    || ((e.ctrlKey || e.metaKey) && (e.code === 'KeyD' || e.code === 'KeyZ' || e.code === 'KeyY' || e.code === 'KeyA' || e.code === 'KeyC' || e.code === 'KeyV'))) {
+                    e.preventDefault();
+                }
+            }
+        };
+        const onKeyUp = (e) => {
+            inputState.keys[e.code] = false;
+            inputState.ctrlKey = e.ctrlKey || e.metaKey;
+            inputState.shiftKey = e.shiftKey;
+        };
         const onMouseMove = (e) => {
             if (inputState.pointerLocked) {
                 inputState.mouseDX += e.movementX;
                 inputState.mouseDY += e.movementY;
+            } else if (inputState._mouseDownPos && !inputState.pointerLocked) {
+                // Lock pointer when user starts dragging (>3px from mousedown)
+                // But not if pointer lock is blocked (e.g. during gizmo drag)
+                if (!inputState._pointerLockBlocked) {
+                    const rect = canvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                    const dx = mx - inputState._mouseDownPos.x, dy = my - inputState._mouseDownPos.y;
+                    if (dx * dx + dy * dy > 9) {
+                        try { canvas.requestPointerLock(); } catch (_) {}
+                    }
+                }
             }
             const rect = canvas.getBoundingClientRect();
             inputState.mouseX = e.clientX - rect.left;
             inputState.mouseY = e.clientY - rect.top;
         };
-        const onMouseDown = (e) => { inputState.mouseButtons |= (1 << e.button); };
-        const onMouseUp = (e) => { inputState.mouseButtons &= ~(1 << e.button); };
+        const onMouseDown = (e) => {
+            inputState.mouseButtons |= (1 << e.button);
+            if (!inputState.pointerLocked) {
+                const rect = canvas.getBoundingClientRect();
+                const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top, button: e.button };
+                inputState._mouseDownPos = pos;
+                inputState.mouseDownEvents.push(pos);
+            }
+        };
+        const onMouseUp = (e) => {
+            inputState.mouseButtons &= ~(1 << e.button);
+            // Detect click (not drag) — mouseup within 5px of mousedown
+            if (inputState._mouseDownPos && inputState._mouseDownPos.button === e.button) {
+                const rect = canvas.getBoundingClientRect();
+                const ux = e.clientX - rect.left, uy = e.clientY - rect.top;
+                const dx = ux - inputState._mouseDownPos.x, dy = uy - inputState._mouseDownPos.y;
+                if (dx * dx + dy * dy < 25) {
+                    inputState.clickEvents.push({ x: ux, y: uy, button: e.button });
+                } else if (e.button === 2) {
+                    // Right-drag box select
+                    const sx = inputState._mouseDownPos.x, sy = inputState._mouseDownPos.y;
+                    inputState.boxSelectEvents.push({
+                        x1: Math.min(sx, ux), y1: Math.min(sy, uy),
+                        x2: Math.max(sx, ux), y2: Math.max(sy, uy)
+                    });
+                }
+            }
+            inputState._mouseDownPos = null;
+            // Release pointer lock on mouse up (so it only stays locked while dragging)
+            if (inputState.pointerLocked) {
+                document.exitPointerLock();
+            }
+        };
         const onWheel = (e) => { inputState.wheelDelta += e.deltaY; e.preventDefault(); };
         const onLockChange = () => {
             inputState.pointerLocked = document.pointerLockElement === canvas;
@@ -740,19 +809,21 @@ window.WgpuSharp = {
         canvas.addEventListener("mousedown", onMouseDown);
         canvas.addEventListener("mouseup", onMouseUp);
         canvas.addEventListener("wheel", onWheel, { passive: false });
+        canvas.addEventListener("contextmenu", (e) => e.preventDefault());
         document.addEventListener("pointerlockchange", onLockChange);
-
-        // Click canvas to lock pointer
-        canvas.addEventListener("click", () => {
-            if (!inputState.pointerLocked) canvas.requestPointerLock();
-        });
 
         inputState._listeners = { onKeyDown, onKeyUp, onMouseMove, onMouseDown, onMouseUp, onWheel, onLockChange, canvas };
     },
 
     getInputState() {
-        return {
+        const state = {
             keys: Object.keys(inputState.keys).filter(k => inputState.keys[k]),
+            keyDownEvents: inputState.keyDownEvents.slice(),
+            clickEvents: inputState.clickEvents.slice(),
+            mouseDownEvents: inputState.mouseDownEvents.slice(),
+            boxSelectEvents: inputState.boxSelectEvents.slice(),
+            ctrlKey: inputState.ctrlKey,
+            shiftKey: inputState.shiftKey,
             mouseX: inputState.mouseX,
             mouseY: inputState.mouseY,
             mouseDX: inputState.mouseDX,
@@ -761,10 +832,19 @@ window.WgpuSharp = {
             wheelDelta: inputState.wheelDelta,
             pointerLocked: inputState.pointerLocked,
         };
+        inputState.keyDownEvents = [];
+        inputState.clickEvents = [];
+        inputState.mouseDownEvents = [];
+        inputState.boxSelectEvents = [];
+        return state;
     },
 
     isKeyDown(code) {
         return !!inputState.keys[code];
+    },
+
+    setPointerLockBlocked(blocked) {
+        inputState._pointerLockBlocked = blocked;
     },
 
     disposeInput() {

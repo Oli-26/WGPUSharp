@@ -28,6 +28,134 @@
     </div>
     <script src="_content/WgpuSharp/WgpuSharp.js"></script>
     <script src="shader-playground.js"></script>
+    <script>
+        window.WgpuSharpEditor = {
+            downloadFile(filename, content) {
+                const blob = new Blob([content], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(a.href);
+            },
+            pickAndReadFile(accept) {
+                return new Promise((resolve) => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = accept;
+                    input.onchange = async () => {
+                        if (input.files.length === 0) { resolve(null); return; }
+                        resolve(await input.files[0].text());
+                    };
+                    input.click();
+                });
+            },
+            captureScreenshot(canvasId) {
+                const canvas = document.getElementById(canvasId);
+                if (!canvas) return;
+                canvas.toBlob((blob) => {
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'screenshot.png';
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                }, 'image/png');
+            },
+            _audioCtx: null,
+            _audioSources: {},
+
+            initAudio() {
+                if (!this._audioCtx) this._audioCtx = new AudioContext();
+            },
+
+            updateAudioSources(listenerX, listenerY, listenerZ, sources) {
+                if (!this._audioCtx) return;
+                const ctx = this._audioCtx;
+
+                // Create/update sources
+                const activeIds = new Set();
+                for (const s of sources) {
+                    activeIds.add(s.id);
+                    if (!this._audioSources[s.id]) {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.type = 'sine';
+                        osc.frequency.value = 220 + (s.id % 8) * 55; // different pitch per source
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.start();
+                        this._audioSources[s.id] = { osc, gain };
+                    }
+                    // Distance attenuation
+                    const dx = s.x - listenerX, dy = s.y - listenerY, dz = s.z - listenerZ;
+                    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                    const vol = Math.max(0, 1.0 - dist / 15.0);
+                    this._audioSources[s.id].gain.gain.value = vol * 0.15;
+                }
+                // Remove sources no longer active
+                for (const id in this._audioSources) {
+                    if (!activeIds.has(parseInt(id))) {
+                        this._audioSources[id].osc.stop();
+                        delete this._audioSources[id];
+                    }
+                }
+            },
+
+            stopAllAudio() {
+                for (const id in this._audioSources) {
+                    this._audioSources[id].osc.stop();
+                }
+                this._audioSources = {};
+            },
+
+            drawMinimap(playerX, playerZ, dots) {
+                const canvas = document.getElementById('minimap-canvas');
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                const w = canvas.width, h = canvas.height;
+                const scale = 3;
+                ctx.clearRect(0, 0, w, h);
+                for (const dot of dots) {
+                    const sx = w/2 + (dot.x - playerX) * scale;
+                    const sy = h/2 + (dot.z - playerZ) * scale;
+                    if (sx < -5 || sx > w+5 || sy < -5 || sy > h+5) continue;
+                    ctx.fillStyle = dot.color;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, dot.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            },
+
+            pickAndReadFileBase64(accept) {
+                return new Promise((resolve) => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = accept;
+                    input.onchange = async () => {
+                        if (input.files.length === 0) { resolve(null); return; }
+                        const file = input.files[0];
+                        // Use Web Worker for off-thread file reading + base64 encoding
+                        const worker = new Worker('import-worker.js');
+                        worker.onmessage = (e) => {
+                            if (e.data.type === 'progress') {
+                                // Update progress bar if available
+                                const bar = document.getElementById('import-progress-bar');
+                                const label = document.getElementById('import-progress-label');
+                                if (bar) bar.style.width = e.data.pct + '%';
+                                if (label) label.textContent = e.data.phase;
+                            } else if (e.data.type === 'done') {
+                                worker.terminate();
+                                resolve(e.data.fileName + '|' + e.data.base64);
+                            }
+                        };
+                        worker.onerror = () => { worker.terminate(); resolve(null); };
+                        worker.postMessage(file);
+                    };
+                    input.click();
+                });
+            }
+        };
+    </script>
     <script src="_framework/blazor.webassembly.js"></script>
 </body>
 
