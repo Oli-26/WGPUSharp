@@ -195,14 +195,17 @@ public sealed class SceneRenderer : IAsyncDisposable
         // Write environment settings
         batch.WriteBuffer(_envBuffer, settings.ToBytes());
 
-        // Collect visible mesh nodes and group by mesh (reuse collections)
+        // Collect visible mesh nodes, resolve LOD by distance, group by resolved mesh
         _groups.Clear();
         foreach (var node in scene.GetVisibleMeshNodes())
         {
-            if (!_groups.TryGetValue(node.MeshBuffers!, out var list))
+            float dist = Vector3.Distance(cameraPosition, node.Transform.WorldMatrix.Translation);
+            var mesh = node.GetLodMesh(dist) ?? node.MeshBuffers;
+            if (mesh is null) continue;
+            if (!_groups.TryGetValue(mesh, out var list))
             {
                 list = [];
-                _groups[node.MeshBuffers!] = list;
+                _groups[mesh] = list;
             }
             list.Add(node);
         }

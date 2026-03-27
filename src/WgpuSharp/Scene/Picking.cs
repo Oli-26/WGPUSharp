@@ -62,6 +62,9 @@ public static class Picking
         int canvasWidth, int canvasHeight,
         Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix)
     {
+        if (canvasWidth <= 0 || canvasHeight <= 0)
+            return new Ray(Vector3.Zero, -Vector3.UnitZ);
+
         // Convert pixel coordinates to NDC (-1 to 1)
         float ndcX = (2f * mouseX / canvasWidth) - 1f;
         float ndcY = 1f - (2f * mouseY / canvasHeight); // Y is flipped

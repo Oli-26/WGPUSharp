@@ -164,18 +164,11 @@ public sealed class FpsCamera
 
             var objAABB = ComputeWorldAABB(node.Transform.WorldMatrix);
 
-            // Player AABB at new position
-            var playerMin = result - PlayerHalfExtents;
-            var playerMax = result + new Vector3(PlayerHalfExtents.X, EyeHeight + PlayerHalfExtents.Y - EyeHeight, PlayerHalfExtents.Z);
-            // Actually: player box from feet to feet+height
-            playerMin = result - new Vector3(PlayerHalfExtents.X, 0, PlayerHalfExtents.Z);
-            playerMax = result + new Vector3(PlayerHalfExtents.X, EyeHeight * 2f * 0.5f + 0.9f, PlayerHalfExtents.Z);
-
-            // Simpler: player is a box from (feet - halfW, feet, feet - halfW) to (feet + halfW, feet + height, feet + halfW)
-            float pw = PlayerHalfExtents.X;
-            float ph = 1.8f; // full player height
-            playerMin = new Vector3(result.X - pw, result.Y, result.Z - pw);
-            playerMax = new Vector3(result.X + pw, result.Y + ph, result.Z + pw);
+            // Player AABB: box from feet to feet+height, width from PlayerHalfExtents
+            const float pw = 0.3f; // half-width
+            const float ph = 1.8f; // full player height
+            var playerMin = new Vector3(result.X - pw, result.Y, result.Z - pw);
+            var playerMax = new Vector3(result.X + pw, result.Y + ph, result.Z + pw);
 
             if (!AABBOverlap(playerMin, playerMax, objAABB.Min, objAABB.Max))
                 continue;

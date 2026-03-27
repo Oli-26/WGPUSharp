@@ -2,6 +2,55 @@
 
 All notable changes to WgpuSharp will be documented in this file.
 
+## [0.4.0-alpha] — 2026-03-27
+
+### Added — Scene Editor & Game Engine
+- **Scene graph** — transform hierarchy with parent/child nodes, dirty-flag caching, world matrix propagation
+- **Scene editor** (`/editor`) — three-panel layout with hierarchy, viewport, and inspector
+- **Orbit camera** — click-drag to orbit, shift-drag to pan, scroll to zoom, camera bookmarks (Ctrl+1-4)
+- **FPS camera** — play mode with WASD movement, mouse look, jumping, gravity, AABB collision, wall sliding
+- **Gizmo tools** — translate (W), rotate (E), scale (R) with axis arrows, hover highlighting, drag interaction
+- **Multi-select** — shift+click, Ctrl+A, right-drag box select, group move/delete/duplicate/align/distribute
+- **Grid snapping** — configurable position snap (0.1-2 units), rotation snap (15-degree increments)
+- **Undo/redo** — command pattern covering all operations (Ctrl+Z/Y)
+- **13 gameplay tags** — Static, Collectible, Trigger, Enemy, MovingPlatform, Door, Key, Checkpoint, Teleporter, DamageZone, HealthPickup, NPC, AudioSource
+- **Per-object scripting** — text-based script editor with 9 commands (Rotate, Bob, FollowPlayer, OnEnter, OnEnterToggle, SetColor, Scale, Orbit, LookAtPlayer) and 14 templates
+- **Point lights** — up to 8 dynamic point lights with color, intensity, range; forward rendering with multi-light fragment shader
+- **Procedural sky** — gradient shader with zenith/horizon/ground colors, sun disc, atmospheric haze
+- **Lit ground plane** — checkerboard pattern receiving point light illumination, alpha edge fade
+- **Editor grid** — wireframe XZ grid with major/minor lines and colored axis indicators (R=X, G=Y, B=Z)
+- **Scene settings** — configurable sky colors, sun direction/color/intensity, ambient light, fog (color/start/end), level timer
+- **Scene serialization** — save/load to JSON with embedded imported mesh data (base64), all node properties preserved
+- **Scene templates** — Empty, Sandbox, Platformer, Arena presets with New Scene picker
+- **3D model import** — OBJ/GLB/STL via file picker with Web Worker for off-thread reading, progress bar
+- **Material presets** — 15 named presets (Brick, Metal, Wood, Glass, etc.) with color application
+- **Object properties** — solid toggle (walkthrough), locked toggle (prevent edits), visibility, per-node color
+- **Play mode** — FPS walkthrough with score HUD, health bar, minimap, timer countdown, game over, checkpoint respawn
+- **Copy/paste** (Ctrl+C/V), **screenshot** export (PNG), **F3 debug stats** overlay
+- **Drag-drop hierarchy** — reparent nodes by dragging in the scene panel
+- **Spatial audio** — positional Web Audio sources with distance attenuation
+
+### Added — Mesh Processing
+- **Mesh simplification** — `MeshSimplifier` with vertex clustering algorithm for automatic LOD generation
+- **LOD system** — `SceneNode.LodMeshes` with distance-based swapping (20/40 unit thresholds), auto-generated for imported models
+- **OBJ loader rewrite** — span-based zero-allocation parsing, 3-5x faster for large files
+
+### Added — Rendering
+- **Environment uniform buffer** — shared across scene/ground/sky shaders for live scene settings
+- **Distance fog** — configurable start/end distance with color blending in scene and ground shaders
+- **Renderer optimizations** — reused per-frame collections (zero-allocation render loop), cached sky VP, gizmo skip-update, eliminated redundant UpdateTransforms calls
+
+### Fixed
+- Gizmo pipeline missing DepthStencilState (WebGPU validation error)
+- Pointer lock SecurityError on rapid re-acquisition
+- Player never respawning after death (empty respawn block)
+- ExitPlayMode not resetting gameplay state (collected items, keys, triggers leaked)
+- Division by zero in gizmo ray-line closest-point math
+- Redundant ternary in ScriptEngine OnEnter message
+- Missing closing `>` on sidebar and inspector div elements
+- Gameplay methods running after ExitPlayMode in same frame
+- ScreenPointToRay division by zero when canvas size is 0
+
 ## [0.2.0-alpha] — 2026-03-24
 
 ### Added

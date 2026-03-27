@@ -13,7 +13,7 @@
 
 <div class="editor-root">
     @* --- Left: Scene hierarchy --- *@
-    <div class="editor-sidebar @(_playMode ? "panel-dimmed" : "")"
+    <div class="editor-sidebar @(_playMode ? "panel-dimmed" : "")">
         <div class="sidebar-header">
             <strong>Scene</strong>
         </div>
@@ -127,7 +127,7 @@
             {
                 <div class="trigger-message">@_triggerMessage</div>
             }
-            @if (_playMode && _scene.GetAllNodes().Any(n => n.Tag == NodeTag.Enemy))
+            @if (_playMode && _hasEnemies)
             {
                 <div class="health-bar">
                     <div class="health-fill" style="width: @(_playerHealth)%"></div>
@@ -176,7 +176,7 @@
     </div>
 
     @* --- Right: Inspector --- *@
-    <div class="editor-inspector @(_playMode ? "panel-dimmed" : "")"
+    <div class="editor-inspector @(_playMode ? "panel-dimmed" : "")">
         <div class="sidebar-header">
             <strong>Inspector</strong>
         </div>
@@ -432,6 +432,7 @@
     // Play-mode game state
     private int _score;
     private int _totalCollectibles;
+    private bool _hasEnemies;
     private float _playTime;
     private readonly HashSet<int> _collectedIds = new();
 
@@ -480,8 +481,12 @@
     // Cached primitive meshes
     private MeshBuffers? _cubeMesh;
     private MeshBuffers? _sphereMesh;
+    private MeshBuffers? _sphereLod1;
+    private MeshBuffers? _sphereLod2;
     private MeshBuffers? _planeMesh;
     private MeshBuffers? _cylinderMesh;
+    private MeshBuffers? _cylinderLod1;
+    private MeshBuffers? _cylinderLod2;
     private int _nodeCounter;
 
     private enum PrimitiveType { Cube, Sphere, Plane, Cylinder }
@@ -513,12 +518,16 @@
             // Create renderer
             _renderer = await SceneRenderer.CreateAsync(_device, canvas.Format);
 
-            // Create cached primitive meshes
+            // Create cached primitive meshes + LOD variants
             _cubeMesh = await Primitives.Cube().CreateBuffersAsync(_device);
             _sphereMesh = await Primitives.Sphere().CreateBuffersAsync(_device);
+            _sphereLod1 = await Primitives.Sphere(10, 20).CreateBuffersAsync(_device);
+            _sphereLod2 = await Primitives.Sphere(6, 12).CreateBuffersAsync(_device);
             _planeMesh = await Primitives.Plane(4).CreateBuffersAsync(_device);
             _cylinderMesh = await Primitives.Cylinder().CreateBuffersAsync(_device);
-            _lightMesh = await Primitives.Sphere(8, 16).CreateBuffersAsync(_device); // low-poly light icon
+            _cylinderLod1 = await Primitives.Cylinder(16).CreateBuffersAsync(_device);
+            _cylinderLod2 = await Primitives.Cylinder(8).CreateBuffersAsync(_device);
+            _lightMesh = await Primitives.Sphere(8, 16).CreateBuffersAsync(_device);
 
             // Setup default scene
             await SetupDefaultScene();
@@ -550,8 +559,14 @@
 
                     // Escape exits play mode
                     if (input.WasKeyPressed("Escape"))
+                    {
                         ExitPlayMode();
+                        _scene.UpdateTransforms();
+                        // Skip to editor render below
+                    }
 
+                    if (_playMode)
+                    {
                     // Gameplay
                     UpdateCollectibles(frame.DeltaTime);
                     CheckTriggers(frame.DeltaTime);
@@ -589,6 +604,7 @@
 
                     // Minimap
                     await DrawMinimap();
+                    } // end if (_playMode) gameplay+render
                 }
                 else
                 {
@@ -822,6 +838,22 @@
 
             var buffers = await mesh.CreateBuffersAsync(_device);
 
+            // Generate LOD meshes automatically
+            _importPhase = "Generating LODs...";
+            _importPercent = 90;
+            StateHasChanged();
+            await Task.Yield();
+
+            MeshBuffers?[]? lodMeshes = null;
+            if (mesh.VertexCount > 100) // Only generate LODs for non-trivial meshes
+            {
+                var lods = MeshSimplifier.GenerateLODs(mesh);
+                var lod0 = lods[0] != mesh ? await lods[0].CreateBuffersAsync(_device) : null;
+                var lod1 = lods[1] != mesh ? await lods[1].CreateBuffersAsync(_device) : null;
+                if (lod0 is not null || lod1 is not null)
+                    lodMeshes = [lod0, lod1];
+            }
+
             var name = Path.GetFileNameWithoutExtension(fileName);
             var node = new SceneNode($"{name} {++_nodeCounter}")
             {
@@ -830,6 +862,7 @@
                 ImportedMeshData = bytes,
                 ImportedMeshFileName = fileName,
                 Color = new Vector4(0.8f, 0.8f, 0.8f, 1f),
+                LodMeshes = lodMeshes,
             };
             node.Transform.Position = SnapPosition(new Vector3(0, 0.5f, 0));
             _undo.Do(new AddNodeAction(_scene, node));
@@ -881,6 +914,7 @@
         _lastCheckpoint = Vector3.Zero;
         _levelTimer = _levelTimerMax;
         _totalCollectibles = _scene.GetAllNodes().Count(n => n.Tag == NodeTag.Collectible);
+        _hasEnemies = _scene.GetAllNodes().Any(n => n.Tag == NodeTag.Enemy);
 
         // Snapshot transforms so we can restore after play
         _playModeSnapshot.Clear();
@@ -1325,7 +1359,7 @@
 
     private SceneNode AddSphere(string name, Vector3 pos, Vector3 scale, Vector4 color)
     {
-        var node = new SceneNode($"{name}") { MeshBuffers = _sphereMesh, MeshType = "Sphere", Color = color };
+        var node = new SceneNode($"{name}") { MeshBuffers = _sphereMesh, MeshType = "Sphere", Color = color, LodMeshes = [_sphereLod1, _sphereLod2] };
         node.Transform.Position = pos;
         node.Transform.Scale = scale;
         _scene.Add(node);
@@ -1380,11 +1414,19 @@
             MeshBuffers = ResolveMesh(type.ToString()),
             MeshType = type.ToString(),
             Color = PaletteColors[_nodeCounter % PaletteColors.Length],
+            LodMeshes = ResolveLodMeshes(type.ToString()),
         };
         node.Transform.Position = SnapPosition(new Vector3(0, 0.5f, 0));
         _undo.Do(new AddNodeAction(_scene, node));
         SelectSingle(node);
     }
+
+    private MeshBuffers?[]? ResolveLodMeshes(string? meshType) => meshType switch
+    {
+        "Sphere" => [_sphereLod1, _sphereLod2],
+        "Cylinder" => [_cylinderLod1, _cylinderLod2],
+        _ => null,
+    };
 
     private MeshBuffers? ResolveMesh(string? meshType) => meshType switch
     {
@@ -1759,6 +1801,7 @@
                 Locked = false,
                 MoveTarget = original.MoveTarget,
                 Script = original.Script,
+                LodMeshes = original.LodMeshes,
                 Light = original.Light is { } l ? new PointLightData
                 {
                     Color = l.Color,

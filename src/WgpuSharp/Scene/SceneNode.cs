@@ -79,6 +79,21 @@ public sealed class SceneNode
     public MeshBuffers? MeshBuffers { get; set; }
 
     /// <summary>
+    /// Lower-detail mesh buffers for LOD. Index 0 = medium detail, 1 = low detail.
+    /// If null or empty, MeshBuffers is used at all distances.
+    /// </summary>
+    public MeshBuffers?[]? LodMeshes { get; set; }
+
+    /// <summary>Get the appropriate mesh buffers for the given camera distance.</summary>
+    public MeshBuffers? GetLodMesh(float distance)
+    {
+        if (LodMeshes is null || LodMeshes.Length == 0) return MeshBuffers;
+        if (distance > 40f && LodMeshes.Length > 1 && LodMeshes[1] is not null) return LodMeshes[1];
+        if (distance > 20f && LodMeshes[0] is not null) return LodMeshes[0];
+        return MeshBuffers;
+    }
+
+    /// <summary>
     /// Identifier for the mesh type (e.g. "Cube", "Sphere", "Plane", "Cylinder", "Imported").
     /// Used for serialization — GPU mesh buffers can't be serialized, so this tag
     /// allows recreation on load.

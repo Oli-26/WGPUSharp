@@ -8,9 +8,9 @@
 
     <!-- NuGet package metadata -->
     <PackageId>WgpuSharp</PackageId>
-    <Version>0.3.0-alpha</Version>
-    <Title>WgpuSharp — WebGPU for Blazor WASM</Title>
-    <Description>A clean, idiomatic C# binding layer for the browser WebGPU API via Blazor WebAssembly. Supports rendering, compute shaders, mesh loading (OBJ/GLB/STL), materials, input handling, and batched command execution.</Description>
+    <Version>0.4.0-alpha</Version>
+    <Title>WgpuSharp — WebGPU Game Engine for Blazor WASM</Title>
+    <Description>A C# game engine and scene editor for the browser via Blazor WebAssembly and WebGPU. Includes scene graph, transform hierarchy, orbit/FPS cameras, translate/rotate/scale gizmos, point lights, procedural sky, collision/gravity/jumping, mesh loading (OBJ/GLB/STL) with automatic LOD generation, per-object scripting, 13 gameplay tags, undo/redo, scene serialization, and batched instanced rendering.</Description>
     <Authors>WgpuSharp Contributors</Authors>
     <PackageTags>webgpu;blazor;wasm;gpu;graphics;3d;compute;shader;rendering</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>

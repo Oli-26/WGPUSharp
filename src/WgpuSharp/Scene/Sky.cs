@@ -77,20 +77,22 @@ public sealed class Sky : IAsyncDisposable
     /// Update the sky uniform (inverse view-projection) and draw within a render pass.
     /// Call AFTER clearing but BEFORE scene geometry.
     /// </summary>
+    private Matrix4x4 _lastVP;
+    private readonly float[] _tempFloats = new float[16];
+
     public void Update(RenderBatch batch, Matrix4x4 viewProjection)
     {
         if (!Enabled) return;
+        if (viewProjection == _lastVP) return; // Skip if camera hasn't moved
+        _lastVP = viewProjection;
 
         if (Matrix4x4.Invert(viewProjection, out var invVP))
         {
-            float[] values =
-            [
-                invVP.M11, invVP.M12, invVP.M13, invVP.M14,
-                invVP.M21, invVP.M22, invVP.M23, invVP.M24,
-                invVP.M31, invVP.M32, invVP.M33, invVP.M34,
-                invVP.M41, invVP.M42, invVP.M43, invVP.M44,
-            ];
-            Buffer.BlockCopy(values, 0, _invVpBytes, 0, 64);
+            _tempFloats[0] = invVP.M11; _tempFloats[1] = invVP.M12; _tempFloats[2] = invVP.M13; _tempFloats[3] = invVP.M14;
+            _tempFloats[4] = invVP.M21; _tempFloats[5] = invVP.M22; _tempFloats[6] = invVP.M23; _tempFloats[7] = invVP.M24;
+            _tempFloats[8] = invVP.M31; _tempFloats[9] = invVP.M32; _tempFloats[10] = invVP.M33; _tempFloats[11] = invVP.M34;
+            _tempFloats[12] = invVP.M41; _tempFloats[13] = invVP.M42; _tempFloats[14] = invVP.M43; _tempFloats[15] = invVP.M44;
+            Buffer.BlockCopy(_tempFloats, 0, _invVpBytes, 0, 64);
             batch.WriteBuffer(_uniformBuffer, _invVpBytes);
         }
     }

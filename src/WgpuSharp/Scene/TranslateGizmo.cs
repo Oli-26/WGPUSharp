@@ -141,8 +141,22 @@ public sealed class TranslateGizmo : IAsyncDisposable
     /// Update gizmo vertex data for the given world position and write to the batch.
     /// Call before Draw().
     /// </summary>
+    private Vector3 _lastWorldPos;
+    private float _lastCamDist;
+    private GizmoAxis _lastHovered;
+
     public void Update(RenderBatch batch, Vector3 worldPos, float cameraDistance)
     {
+        // Skip rebuild if nothing changed
+        bool needsUpdate = worldPos != _lastWorldPos
+            || MathF.Abs(cameraDistance - _lastCamDist) > 0.01f
+            || HoveredAxis != _lastHovered
+            || IsDragging;
+        if (!needsUpdate) return;
+        _lastWorldPos = worldPos;
+        _lastCamDist = cameraDistance;
+        _lastHovered = HoveredAxis;
+
         // Scale gizmo so it's a consistent screen size regardless of zoom
         float size = cameraDistance * 0.12f;
         float arrowSize = size * 0.15f;
