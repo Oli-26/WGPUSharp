@@ -30,6 +30,43 @@
     <script src="shader-playground.js"></script>
     <script>
         window.WgpuSharpEditor = {
+            focusElement(id) {
+                const el = document.getElementById(id);
+                if (el) { el.focus(); el.select(); }
+            },
+            _sceneFileHandle: null,
+            async saveToHandle(content) {
+                if (!this._sceneFileHandle) return false;
+                try {
+                    const writable = await this._sceneFileHandle.createWritable();
+                    await writable.write(content);
+                    await writable.close();
+                    return true;
+                } catch { return false; }
+            },
+            async saveWithPicker(suggestedName, content) {
+                if (!window.showSaveFilePicker) {
+                    // Fallback for browsers without File System Access API
+                    const blob = new Blob([content], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = suggestedName;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    return suggestedName;
+                }
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName,
+                        types: [{ description: 'Scene files', accept: { 'application/json': ['.json'] } }],
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(content);
+                    await writable.close();
+                    this._sceneFileHandle = handle;
+                    return handle.name;
+                } catch { return null; } // user cancelled
+            },
             downloadFile(filename, content) {
                 const blob = new Blob([content], { type: 'application/json' });
                 const a = document.createElement('a');
@@ -49,6 +86,17 @@
                     };
                     input.click();
                 });
+            },
+            async pickAndReadFileWithHandle(accept) {
+                if (!window.showOpenFilePicker) return null;
+                try {
+                    const [handle] = await window.showOpenFilePicker({
+                        types: [{ description: 'Scene files', accept: { 'application/json': ['.json'] } }],
+                    });
+                    this._sceneFileHandle = handle;
+                    const file = await handle.getFile();
+                    return await file.text();
+                } catch { return null; }
             },
             captureScreenshot(canvasId) {
                 const canvas = document.getElementById(canvasId);
@@ -124,6 +172,46 @@
                     ctx.arc(sx, sy, dot.size, 0, Math.PI * 2);
                     ctx.fill();
                 }
+            },
+
+            // --- Build integration (Electron only) ---
+            get canBuild() { return !!window.electronAPI; },
+            _buildOutputCallback: null,
+
+            initBuildListener(dotNetRef) {
+                if (!window.electronAPI) return;
+                this._buildOutputCallback = dotNetRef;
+                window.electronAPI.onBuildOutput((data) => {
+                    if (this._buildOutputCallback) {
+                        var text = typeof data === 'string' ? data : (data.text || String(data));
+                        this._buildOutputCallback.invokeMethodAsync('OnBuildOutput', 'stdout', text);
+                    }
+                });
+            },
+
+            async writePackageMetadata(meta) {
+                if (!window.electronAPI) return;
+                await window.electronAPI.writePackageMetadata(meta);
+            },
+
+            async saveSceneForBuild(sceneJson) {
+                if (!window.electronAPI) return;
+                await window.electronAPI.saveSceneForBuild(sceneJson);
+            },
+
+            async runGameBuild(target, aot) {
+                if (!window.electronAPI) return;
+                return await window.electronAPI.runGameBuild(target, aot);
+            },
+
+            async runBuild(target, aot) {
+                if (!window.electronAPI) return { success: false, code: -1 };
+                return await window.electronAPI.runBuild(target, aot);
+            },
+
+            async cancelBuild() {
+                if (!window.electronAPI) return false;
+                return await window.electronAPI.cancelBuild();
             },
 
             pickAndReadFileBase64(accept) {

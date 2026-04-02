@@ -43,12 +43,13 @@ Open the editor at `/editor` after starting the demo app with `dotnet run`.
 
 | Element | Description |
 |---|---|
-| **Undo / Redo** | Buttons + Ctrl+Z/Y |
+| **Undo / Redo** | Buttons + Ctrl+Z/Y. Hover to see history. |
 | **Move / Rotate / Scale** | Active gizmo tool (purple = selected) |
-| **Snap** | Grid snap toggle + size dropdown |
+| **Local / World** | Toggle gizmo space (L key) |
+| **Snap** | Grid snap toggle + size dropdown. Indicator shown in viewport. |
 | **Floor** | Toggle the ground plane |
 | **Play** | Enter play mode |
-| **Hints** | Keyboard shortcut reference |
+| **?=help** | Click for full keyboard shortcut reference |
 
 ---
 
@@ -84,7 +85,9 @@ Open the editor at `/editor` after starting the demo app with `dotnet run`.
 | **E** | Rotate tool |
 | **R** | Scale tool |
 | **G** | Toggle grid snap |
+| **L** | Toggle local/world gizmo space |
 | **F** | Focus camera on selected object |
+| **?** (Shift+/) | Show keyboard shortcut help dialog |
 | **F3** | Toggle debug stats overlay (FPS, node count, position) |
 | **Delete / Backspace** | Delete selected |
 | **Ctrl+D** | Duplicate selected |
@@ -104,6 +107,8 @@ Open the editor at `/editor` after starting the demo app with `dotnet run`.
 
 - **Click** an object in the viewport or hierarchy to select it
 - **Shift+click** to add/remove from multi-selection
+- **Double-click** a node in the hierarchy to rename it inline
+- **Right-click** a node in the hierarchy for a context menu (cut, copy, paste, duplicate, rename, delete)
 - **Right-click drag** a rectangle in the viewport to box-select all enclosed objects
 - **Ctrl+A** selects every object in the scene
 - **Escape** clears the selection
@@ -154,9 +159,23 @@ Click **Import**, pick a file. A progress bar shows the import stages (reading, 
 
 Imported models are embedded in the scene file when saved (as base64), so the `.json` is fully self-contained.
 
+### Importing Rigged/Animated Models
+
+GLB files with skeletal animation data (skins, joints, animations) are automatically detected. When a rigged GLB is imported:
+
+- The skeleton hierarchy and inverse bind matrices are extracted
+- Joint indices and weights are loaded per vertex
+- All animation clips are parsed (translation, rotation, scale keyframes)
+- A dedicated skinned rendering pipeline handles bone blending on the GPU
+- The **Animation** section appears in the inspector with playback controls
+
+Supported rigs: up to 128 joints, 4 influences per vertex. Standard glTF 2.0 skinning with LINEAR or STEP interpolation.
+
 ---
 
 ## Inspector Properties
+
+The inspector is organized into collapsible sections (Properties, Transform, Material, Light, Animation, Script). Click a section header to expand or collapse it.
 
 ### Single Object Selected
 
@@ -179,7 +198,21 @@ Imported models are embedded in the scene file when saved (as base64), so the `.
 | When... | Extra fields shown |
 |---|---|
 | Node is a **Light** | Light Color, Intensity slider, Range slider |
+| Node is a **rigged model** | Animation section: clip selector, play/pause/stop, speed, loop, time scrubber, joint count |
 | Tag is **MovingPlatform** | Move Target (X, Y, Z) — the endpoint for oscillation |
+
+### Animation Controls (rigged models only)
+
+| Control | Description |
+|---|---|
+| **Clip** | Select which animation clip to play |
+| **Play / Pause / Stop** | Playback controls. Stop resets to frame 0. |
+| **Speed** | Playback speed multiplier (0x to 3x) |
+| **Loop** | Whether the animation repeats |
+| **Time** | Scrub to a specific time in the clip |
+| **Joints** | Shows the number of bones in the skeleton |
+
+Animations play in both editor and play mode. The animation state (clip, speed, loop) is saved with the scene.
 
 ---
 
@@ -327,7 +360,7 @@ Click empty space (or press Escape) to deselect all objects. The inspector shows
 
 ## Play Mode
 
-Click the green **Play** button to enter play mode. The editor panels dim and the viewport becomes a first-person game.
+Click the green **Play** button to enter play mode. The editor panels dim and the viewport becomes a first-person game. Use the **Pause** button to freeze gameplay while the camera still renders.
 
 ### HUD Elements
 
@@ -402,9 +435,13 @@ Scenes are stored as JSON. All data is self-contained:
 - **Shift+click** to multi-select, then use **Align** buttons to line things up
 
 ### Organizing
+- **Filter** nodes with the search box at the top of the hierarchy
+- **Collapse/expand** parent nodes by clicking the arrow toggle
 - **Drag nodes** in the hierarchy to reparent them (create groups)
 - Drop on *"(drop here for root)"* to move back to top level
 - Name objects descriptively — Door/Key/Teleporter matching depends on names
+- **Node icons** show type at a glance: # = Cube, @ = Sphere, o = Light, etc.
+- **Lock indicator** (amber L) appears on locked nodes in the hierarchy
 
 ### Testing
 - **Play** frequently — the round-trip is instant, and all changes reset on Stop

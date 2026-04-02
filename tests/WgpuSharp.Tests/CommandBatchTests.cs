@@ -37,7 +37,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.CreateCommandEncoder(10);
-        var commands = batch.GetCommands();
+        var commands = batch.GetCommands().ToArray();
         Assert.Single(commands);
         var cmd = Cmd(commands, 0);
         Assert.Equal(2, cmd[0]); // opcode 2
@@ -49,7 +49,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.Draw(passIdOrRef: -1, vertexCount: 3, instanceCount: 1, firstVertex: 0, firstInstance: 0);
-        var cmd = Cmd(batch.GetCommands(), 0);
+        var cmd = Cmd(batch.GetCommands().ToArray(), 0);
         Assert.Equal(8, cmd[0]);
         Assert.Equal(3, cmd[3]); // vertexCount
     }
@@ -59,7 +59,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.DrawIndexed(passIdOrRef: -1, indexCount: 36, instanceCount: 2);
-        var cmd = Cmd(batch.GetCommands(), 0);
+        var cmd = Cmd(batch.GetCommands().ToArray(), 0);
         Assert.Equal(9, cmd[0]);
         Assert.Equal(36, cmd[3]); // indexCount
         Assert.Equal(2, cmd[4]); // instanceCount
@@ -70,7 +70,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.DrawIndirect(passIdOrRef: -1, bufferIdOrRef: 5, indirectOffset: 0);
-        var cmd = Cmd(batch.GetCommands(), 0);
+        var cmd = Cmd(batch.GetCommands().ToArray(), 0);
         Assert.Equal(17, cmd[0]);
         Assert.Equal(5, cmd[3]); // bufferId
     }
@@ -80,7 +80,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.DrawIndexedIndirect(passIdOrRef: -1, bufferIdOrRef: 7, indirectOffset: 16);
-        var cmd = Cmd(batch.GetCommands(), 0);
+        var cmd = Cmd(batch.GetCommands().ToArray(), 0);
         Assert.Equal(18, cmd[0]);
         Assert.Equal(7, cmd[3]); // bufferId
         Assert.Equal(16L, cmd[4]); // offset
@@ -94,7 +94,7 @@ public class CommandBatchTests
         batch.WriteBuffer(10, 20, data);
 
         Assert.True(batch.HasBufferWrites);
-        var writes = batch.GetBufferWrites();
+        var writes = batch.GetBufferWritesList();
         Assert.Single(writes);
     }
 
@@ -103,7 +103,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         float[] data = [1.0f, 2.0f];
-        batch.WriteBuffer(10, 20, data);
+        batch.WriteBuffer(10, 20, data, data.Length);
 
         Assert.True(batch.HasBufferWrites);
         Assert.Equal(1, batch.CommandCount);
@@ -120,7 +120,7 @@ public class CommandBatchTests
         int buf = batch.FinishEncoder(enc);            // op 11
         batch.Submit(1, buf);                           // op 12
 
-        var commands = batch.GetCommands();
+        var commands = batch.GetCommands().ToArray();
         Assert.Equal(6, commands.Length);
         Assert.Equal(2, Cmd(commands, 0)[0]);   // createCommandEncoder
         Assert.Equal(14, Cmd(commands, 1)[0]);  // beginComputePass
@@ -147,7 +147,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.SetPipeline(-1, 42);
-        var cmd = Cmd(batch.GetCommands(), 0);
+        var cmd = Cmd(batch.GetCommands().ToArray(), 0);
         Assert.Equal(4, cmd[0]);
         Assert.Equal(42, cmd[3]); // pipelineId
     }
@@ -157,7 +157,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.SetBindGroup(-1, 0, 99);
-        var cmd = Cmd(batch.GetCommands(), 0);
+        var cmd = Cmd(batch.GetCommands().ToArray(), 0);
         Assert.Equal(5, cmd[0]);
         Assert.Equal(0, cmd[3]);  // groupIndex
         Assert.Equal(99, cmd[4]); // bindGroupId
@@ -168,7 +168,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.SetVertexBuffer(-1, 0, 55);
-        Assert.Equal(6, Cmd(batch.GetCommands(), 0)[0]);
+        Assert.Equal(6, Cmd(batch.GetCommands().ToArray(), 0)[0]);
     }
 
     [Fact]
@@ -176,7 +176,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.SetIndexBuffer(-1, 33, "uint16");
-        var cmd = Cmd(batch.GetCommands(), 0);
+        var cmd = Cmd(batch.GetCommands().ToArray(), 0);
         Assert.Equal(7, cmd[0]);
         Assert.Equal("uint16", cmd[4]);
     }
@@ -186,7 +186,7 @@ public class CommandBatchTests
     {
         var batch = new CommandBatch();
         batch.ReleaseHandle(42);
-        Assert.Equal(16, Cmd(batch.GetCommands(), 0)[0]);
+        Assert.Equal(16, Cmd(batch.GetCommands().ToArray(), 0)[0]);
     }
 
     [Fact]
@@ -195,7 +195,7 @@ public class CommandBatchTests
         var batch = new CommandBatch();
         int enc = batch.CreateCommandEncoder(1);
         batch.BeginRenderPass(enc, [new { viewId = -1 }], null);
-        Assert.Equal(3, Cmd(batch.GetCommands(), 1)[0]);
+        Assert.Equal(3, Cmd(batch.GetCommands().ToArray(), 1)[0]);
     }
 
     [Fact]

@@ -2,7 +2,7 @@
 
 A C# game engine and scene editor for the browser, built on **WebGPU** and **Blazor WebAssembly**.
 
-> **Status:** 0.4.0-alpha — actively developed, API may change.
+> **Status:** 0.5.0-alpha — actively developed, API may change.
 
 ## What it does
 
@@ -26,6 +26,7 @@ var pipeline = await device.CreateRenderPipelineAsync(descriptor);
 - **Rendering** — vertex/index buffers, render pipelines, depth, textures, materials, PBR shading
 - **Compute shaders** — storage buffers, dispatch workgroups, GPU read-back
 - **Mesh loading** — OBJ, GLB (glTF 2.0), STL with automatic material extraction
+- **Skeletal animation** — rigged GLB import with joint skinning, keyframe sampling, animation playback
 - **Mesh simplification** — vertex clustering LOD generation for imported models
 - **Materials** — PBR properties, base color textures, MTL file parsing, auto UV generation
 - **Input** — keyboard, mouse, pointer lock, scroll wheel, edge-triggered key events, box select
@@ -39,6 +40,7 @@ var pipeline = await device.CreateRenderPipelineAsync(descriptor);
 - **Scene graph** — transform hierarchy with parent/child nodes, drag-drop reparenting
 - **Gizmo tools** — translate (W), rotate (E), scale (R) with grid and rotation snapping
 - **Multi-select** — shift+click, Ctrl+A, box select, group operations (align, distribute)
+- **Rigged model import** — GLB files with skins and animations auto-detected, animation controls in inspector
 - **13 gameplay tags** — Collectible, Enemy, Trigger, Door/Key, Checkpoint, Teleporter, DamageZone, HealthPickup, NPC, MovingPlatform, AudioSource
 - **Per-object scripting** — 9 commands (Rotate, Bob, FollowPlayer, OnEnter, etc.) with 14 templates
 - **Point lights** — up to 8 dynamic lights with color, intensity, range
@@ -47,6 +49,7 @@ var pipeline = await device.CreateRenderPipelineAsync(descriptor);
 - **Scene save/load** — JSON with embedded imported meshes
 - **LOD system** — automatic distance-based detail reduction for imported models
 - **Undo/redo**, copy/paste, camera bookmarks, screenshot export, F3 debug stats
+- **Editor UI** — hierarchy search/filter, collapsible sections, right-click context menu, node icons, keyboard shortcut help (?), pause in play mode
 
 ## Running the demos
 
@@ -219,6 +222,53 @@ WgpuSharp/
     ├── EDITOR_GUIDE.md          # Scene editor reference
     └── LOD_GUIDE.md             # Level of detail guide
 ```
+
+## Building a scene
+
+1. Start the demo app:
+   ```bash
+   dotnet run --project src/WgpuSharp.Demo
+   ```
+2. Open **http://localhost:5212/editor** in Chrome or Edge.
+3. Add objects (cubes, spheres, lights, imported models), set tags and scripts in the inspector.
+4. Hit **Play** to playtest, **Escape** to return to the editor.
+5. Click **Save** in the scene panel to download your scene as `scene.json`.
+6. Copy the saved file into `src/WgpuSharp.Demo/wwwroot/scenes/`.
+7. Load it directly by opening **http://localhost:5212/editor?scene=scene.json**.
+
+Scenes placed in `wwwroot/scenes/` are bundled into all builds automatically. The `?scene=` parameter loads a scene on startup instead of the default template.
+
+Pick a template (Platformer, Arena, Sandbox) from the bottom of the scene panel to start with a pre-built layout. See [docs/EDITOR_GUIDE.md](docs/EDITOR_GUIDE.md) for the full reference.
+
+### Running the editor as a desktop app
+
+The editor can run as a standalone Electron app with built-in build buttons for packaging your scenes:
+
+```bash
+cd electron
+npm install
+npm run setup   # publishes the Blazor app into electron/www
+npm start       # launches the editor
+```
+
+From inside the Electron editor, use the **Package** dialog to build web, desktop, or APK targets directly — no terminal needed.
+
+> The `electron/` directory is gitignored. It's a local dev tool, not part of the distributed project.
+
+## Packaging for deployment
+
+The `packaging/build.sh` script produces deployable builds:
+
+```bash
+./packaging/build.sh web        # Static site in dist/web — deploy to any host
+./packaging/build.sh electron   # Desktop app via Electron
+./packaging/build.sh apk        # Android APK via Capacitor
+./packaging/build.sh all        # All three targets
+```
+
+Add `--aot` for ahead-of-time compilation (slower build, faster runtime). Preview a web build locally with `npx serve dist/web`.
+
+**Prerequisites:** .NET SDK for all targets; Node.js/npm for Electron and APK; Android SDK for APK.
 
 ## Building and testing
 

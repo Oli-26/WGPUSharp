@@ -1,44 +1,14 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">WgpuSharp.Demo</a>
-        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
-            <span class="navbar-toggler-icon"></span>
-        </button>
+<nav class="top-nav">
+    <a class="top-nav-brand" href="">WgpuSharp</a>
+    <div class="top-nav-links">
+        <NavLink class="nav-link" href="" Match="NavLinkMatch.All">Home</NavLink>
+        <NavLink class="nav-link" href="triangle">Triangle</NavLink>
+        <NavLink class="nav-link" href="cube">Cube</NavLink>
+        <NavLink class="nav-link" href="reaction-diffusion">Reaction-Diffusion</NavLink>
+        <NavLink class="nav-link" href="mesh-viewer">Mesh Viewer</NavLink>
+        <NavLink class="nav-link" href="fly">Fly Camera</NavLink>
+        <NavLink class="nav-link" href="msaa">MSAA</NavLink>
+        <NavLink class="nav-link" href="shader-playground">Shader Playground</NavLink>
+        <NavLink class="nav-link nav-link-accent" href="editor">Scene Editor</NavLink>
     </div>
-</div>
-
-<div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
-    <nav class="flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="editor">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Scene Editor
-            </NavLink>
-        </div>
-    </nav>
-</div>
-
-@code {
-    private bool collapseNavMenu = true;
-
-    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
-
-    private void ToggleNavMenu()
-    {
-        collapseNavMenu = !collapseNavMenu;
-    }
-}
+</nav>

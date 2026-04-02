@@ -6,7 +6,9 @@
     <h2 style="margin-bottom: 4px;">WgpuSharp</h2>
     <p style="color: #888; font-size: 1.1em; margin-top: 0;">WebGPU for Blazor WASM — typed, async, zero JavaScript required.</p>
 
-    <div style="background: #151520; border: 1px solid #333; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px;">
+    <div class="code-block-wrapper">
+        <div class="code-block-header">C# Example</div>
+        <div style="background: #151520; border: 1px solid #333; border-top: none; border-radius: 0 0 8px 8px; padding: 16px 20px;">
 <pre style="margin: 0; font-size: 0.85em; color: #cdd6f4; overflow-x: auto;"><span style="color:#89b4fa;">var</span> adapter = <span style="color:#89b4fa;">await</span> Gpu.RequestAdapterAsync(JS);
 <span style="color:#89b4fa;">var</span> device  = <span style="color:#89b4fa;">await</span> adapter.RequestDeviceAsync();
 <span style="color:#89b4fa;">var</span> canvas  = <span style="color:#89b4fa;">await</span> GpuCanvas.ConfigureAsync(device, <span style="color:#a6e3a1;">"my-canvas"</span>);
@@ -20,9 +22,17 @@ pass.SetPipeline(pipeline);
 pass.DrawIndexed(indexCount);
 pass.EndAndSubmit();
 <span style="color:#89b4fa;">await</span> batch.FlushAsync(); <span style="color:#6c7086;">// entire frame in 1 JS call</span></pre>
+        </div>
     </div>
 
     <h4 style="margin-bottom: 12px;">Demos</h4>
+
+    <a href="/editor" style="text-decoration: none; display: block; margin-bottom: 12px;">
+        <div class="hero-card">
+            <strong>Scene Editor</strong>
+            <span>Full 3D scene editor — hierarchy, inspector, gizmos, scripting, play mode, mesh import, and more</span>
+        </div>
+    </a>
 
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 24px;">
         <a href="/triangle" style="text-decoration: none;">
@@ -71,35 +81,35 @@ pass.EndAndSubmit();
 
     <h4>Features</h4>
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; margin-bottom: 24px; font-size: 0.9em;">
-        <div><span style="color: #a6e3a1;">+</span> Render pipelines & shaders</div>
-        <div><span style="color: #a6e3a1;">+</span> Compute shaders (GPGPU)</div>
-        <div><span style="color: #a6e3a1;">+</span> Vertex, index, uniform buffers</div>
-        <div><span style="color: #a6e3a1;">+</span> Textures, samplers, materials</div>
-        <div><span style="color: #a6e3a1;">+</span> Depth buffer & culling</div>
-        <div><span style="color: #a6e3a1;">+</span> MSAA anti-aliasing</div>
-        <div><span style="color: #a6e3a1;">+</span> Indirect / multi-draw</div>
-        <div><span style="color: #a6e3a1;">+</span> Instanced rendering</div>
-        <div><span style="color: #a6e3a1;">+</span> Mesh loading (OBJ/GLB/STL)</div>
-        <div><span style="color: #a6e3a1;">+</span> PBR materials & textures</div>
-        <div><span style="color: #a6e3a1;">+</span> Keyboard & mouse input</div>
-        <div><span style="color: #a6e3a1;">+</span> Batched commands (1 JS call/frame)</div>
-        <div><span style="color: #a6e3a1;">+</span> Per-frame handle cleanup</div>
-        <div><span style="color: #a6e3a1;">+</span> Type-safe enums (zero magic strings)</div>
-        <div><span style="color: #a6e3a1;">+</span> IAsyncDisposable on all resources</div>
-        <div><span style="color: #a6e3a1;">+</span> Full XML IntelliSense docs</div>
-        <div><span style="color: #a6e3a1;">+</span> Input validation & clear errors</div>
-        <div><span style="color: #a6e3a1;">+</span> MIT licensed, NuGet ready</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Render pipelines & shaders</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Compute shaders (GPGPU)</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Vertex, index, uniform buffers</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Textures, samplers, materials</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Depth buffer & culling</div>
+        <div><span style="color: #4ade80;">&#10003;</span> MSAA anti-aliasing</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Indirect / multi-draw</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Instanced rendering</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Mesh loading (OBJ/GLB/STL)</div>
+        <div><span style="color: #4ade80;">&#10003;</span> PBR materials & textures</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Keyboard & mouse input</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Batched commands (1 JS call/frame)</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Per-frame handle cleanup</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Type-safe enums (zero magic strings)</div>
+        <div><span style="color: #4ade80;">&#10003;</span> IAsyncDisposable on all resources</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Full XML IntelliSense docs</div>
+        <div><span style="color: #4ade80;">&#10003;</span> Input validation & clear errors</div>
+        <div><span style="color: #4ade80;">&#10003;</span> MIT licensed, NuGet ready</div>
     </div>
 
     <h4>Quick Start</h4>
-    <ol style="font-size: 0.9em; line-height: 1.8;">
-        <li>Add to your Blazor WASM project: <code>dotnet add package WgpuSharp</code></li>
-        <li>Add to <code>index.html</code>: <code>&lt;script src="_content/WgpuSharp/WgpuSharp.js"&gt;&lt;/script&gt;</code></li>
-        <li>Inject <code>@@inject IJSRuntime JS</code> and call <code>Gpu.RequestAdapterAsync(JS)</code></li>
+    <ol class="quick-start-steps">
+        <li><span class="step-number">1</span> Add to your Blazor WASM project: <code>dotnet add package WgpuSharp</code></li>
+        <li><span class="step-number">2</span> Add to <code>index.html</code>: <code>&lt;script src="_content/WgpuSharp/WgpuSharp.js"&gt;&lt;/script&gt;</code></li>
+        <li><span class="step-number">3</span> Inject <code>@@inject IJSRuntime JS</code> and call <code>Gpu.RequestAdapterAsync(JS)</code></li>
     </ol>
 
     <p style="font-size: 0.85em; color: #666; margin-top: 24px;">
-        WgpuSharp 0.2.0-alpha
+        WgpuSharp 0.4.0-alpha
         &mdash; Requires Chrome/Edge with WebGPU enabled
         &mdash; <a href="https://github.com" style="color: #58a6ff;">GitHub</a>
     </p>
@@ -111,7 +121,7 @@ pass.EndAndSubmit();
         border: 1px solid #333;
         border-radius: 6px;
         padding: 14px 16px;
-        transition: border-color 0.15s, background 0.15s;
+        transition: border-color 0.15s, background 0.15s, transform 0.2s ease, box-shadow 0.2s ease;
         display: flex;
         flex-direction: column;
         gap: 4px;
@@ -119,6 +129,8 @@ pass.EndAndSubmit();
     .demo-card:hover {
         border-color: #58a6ff;
         background: #1a1a2e;
+        transform: translateY(-3px);
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
     }
     .demo-card strong {
         color: #e0e0f0;

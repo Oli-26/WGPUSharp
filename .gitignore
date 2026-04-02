@@ -26,4 +26,8 @@ Thumbs.db
 ## Build output
 publish/
 artifacts/
+dist/
 CLAUDE.md
+
+## Editor Electron app (local dev tool)
+electron/

@@ -35,13 +35,13 @@ public static class Gpu
     /// <returns>A GPU adapter that can be used to request a device.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the WgpuSharp.js bridge script is not loaded.</exception>
     /// <exception cref="GpuException">Thrown when WebGPU is not supported or no adapter is available.</exception>
-    public static async Task<GpuAdapter> RequestAdapterAsync(IJSRuntime js, CancellationToken ct = default)
+    public static async Task<GpuAdapter> RequestAdapterAsync(IJSRuntime js, bool preferHighPerformance = false, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(js);
         var bridge = new JsBridge(js);
         try
         {
-            var handle = await bridge.RequestAdapterAsync(ct);
+            var handle = await bridge.RequestAdapterAsync(preferHighPerformance, ct);
             return new GpuAdapter(bridge, handle);
         }
         catch (JSException ex) when (ex.Message.Contains("WgpuSharp"))

@@ -33,6 +33,26 @@ public enum NodeTag
     DamageZone,
     /// <summary>HealthPickup — collectible that restores player health on contact.</summary>
     HealthPickup,
+    /// <summary>Springboard — launches the player upward when stepped on (jump pad).</summary>
+    Springboard,
+    /// <summary>Breakable — crumbling platform that disappears after the player stands on it for 1 second.</summary>
+    Breakable,
+    /// <summary>Switch — toggles visibility of a linked object on player contact (matched by name prefix, e.g. "Switch_DoorA" toggles "DoorA").</summary>
+    Switch,
+    /// <summary>Spawner — periodically makes invisible children visible at their start position (enemy respawn).</summary>
+    Spawner,
+    /// <summary>Projectile — moves forward continuously and destroys itself on collision with the player.</summary>
+    Projectile,
+    /// <summary>Ladder — allows vertical movement when the player is inside the volume, disabling gravity.</summary>
+    Ladder,
+    /// <summary>Water — slows player movement and disables gravity when inside the volume (swimming).</summary>
+    Water,
+    /// <summary>Bouncer — pushes the player away from its center on contact (bumper).</summary>
+    Bouncer,
+    /// <summary>Coin — collectible that awards score points parsed from the name (e.g. "Coin_10" gives 10 points, default 1).</summary>
+    Coin,
+    /// <summary>DeathPlane — invisible volume that instantly kills the player on overlap.</summary>
+    DeathPlane,
 }
 
 /// <summary>
@@ -84,12 +104,16 @@ public sealed class SceneNode
     /// </summary>
     public MeshBuffers?[]? LodMeshes { get; set; }
 
-    /// <summary>Get the appropriate mesh buffers for the given camera distance.</summary>
+    /// <summary>Get the appropriate mesh buffers for the given camera distance.
+    /// Thresholds scale with mesh complexity — high-poly meshes LOD sooner.</summary>
     public MeshBuffers? GetLodMesh(float distance)
     {
         if (LodMeshes is null || LodMeshes.Length == 0) return MeshBuffers;
-        if (distance > 40f && LodMeshes.Length > 1 && LodMeshes[1] is not null) return LodMeshes[1];
-        if (distance > 20f && LodMeshes[0] is not null) return LodMeshes[0];
+        // Scale thresholds: base mesh with 10k+ verts LODs at closer distances
+        int vertCount = MeshBuffers?.VertexCount ?? 0;
+        float scale = vertCount > 5000 ? 0.5f : vertCount > 1000 ? 0.75f : 1f;
+        if (distance > 40f * scale && LodMeshes.Length > 1 && LodMeshes[1] is not null) return LodMeshes[1];
+        if (distance > 20f * scale && LodMeshes[0] is not null) return LodMeshes[0];
         return MeshBuffers;
     }
 
@@ -117,6 +141,12 @@ public sealed class SceneNode
 
     /// <summary>Point light data, or null if this node is not a light.</summary>
     public PointLightData? Light { get; set; }
+
+    /// <summary>Animation player for skeletal animation, or null if not a rigged mesh.</summary>
+    public AnimationPlayer? AnimationPlayer { get; set; }
+
+    /// <summary>GPU resources for skinned mesh rendering, or null if not a rigged mesh.</summary>
+    public Mesh.SkinnedRenderData? SkinnedRenderData { get; set; }
 
     /// <summary>Whether this node is a point light.</summary>
     public bool IsLight => Light is not null;
@@ -156,6 +186,19 @@ public sealed class SceneNode
         child.Parent?.RemoveChild(child);
         child.Parent = this;
         _children.Add(child);
+        child.Transform.MarkDirty();
+    }
+
+    /// <summary>Insert a child node at a specific index. Removes from previous parent if any.</summary>
+    public void InsertChild(SceneNode child, int index)
+    {
+        if (child == this) throw new ArgumentException("Cannot add a node as its own child.");
+        if (IsDescendantOf(child)) throw new ArgumentException("Cannot add an ancestor as a child (cycle).");
+
+        child.Parent?.RemoveChild(child);
+        child.Parent = this;
+        index = Math.Clamp(index, 0, _children.Count);
+        _children.Insert(index, child);
         child.Transform.MarkDirty();
     }
 
@@ -206,7 +249,7 @@ public sealed class SceneNode
     {
         if (!Visible) yield break;
 
-        if (MeshBuffers is not null)
+        if (MeshBuffers is not null || SkinnedRenderData is not null)
             yield return this;
 
         foreach (var child in _children)

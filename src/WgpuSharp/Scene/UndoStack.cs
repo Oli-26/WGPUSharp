@@ -29,10 +29,20 @@ public sealed class UndoStack
     /// <summary>Whether there are actions to redo.</summary>
     public bool CanRedo => _redoStack.Count > 0;
 
+    /// <summary>Number of actions on the undo stack.</summary>
+    public int UndoCount => _undoStack.Count;
+    /// <summary>Number of actions on the redo stack.</summary>
+    public int RedoCount => _redoStack.Count;
+
     /// <summary>Description of the next undo action, or null.</summary>
     public string? UndoDescription => _undoStack.Count > 0 ? _undoStack[^1].Description : null;
     /// <summary>Description of the next redo action, or null.</summary>
     public string? RedoDescription => _redoStack.Count > 0 ? _redoStack[^1].Description : null;
+
+    /// <summary>Read-only access to the undo history (most recent last).</summary>
+    public IReadOnlyList<IEditorAction> UndoHistory => _undoStack;
+    /// <summary>Read-only access to the redo history (most recent last).</summary>
+    public IReadOnlyList<IEditorAction> RedoHistory => _redoStack;
 
     /// <summary>
     /// Execute an action and push it onto the undo stack.
@@ -197,9 +207,9 @@ public sealed class DeleteNodeAction : IEditorAction
     public void Undo()
     {
         if (_parent is not null)
-            _parent.AddChild(_node);
+            _parent.InsertChild(_node, _indexInParent);
         else
-            _scene.Add(_node);
+            _scene.Insert(_node, _indexInParent);
 
         _scene.SelectedNode = _node;
     }

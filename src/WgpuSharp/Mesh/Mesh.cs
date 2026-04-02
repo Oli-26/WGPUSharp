@@ -90,10 +90,18 @@ public sealed class Mesh
 
     /// <summary>
     /// Uploads vertex and index data to GPU buffers.
+    /// If the mesh has no normals and has indices, flat normals are computed automatically
+    /// to ensure compatibility with the scene renderer's expected vertex layout.
     /// </summary>
     public async Task<MeshBuffers> CreateBuffersAsync(GpuDevice device, CancellationToken ct = default)
     {
-        var vertexData = GetInterleavedVertices();
+        // Ensure normals exist — the scene renderer pipeline requires pos+normal (stride 24).
+        // A mesh without normals produces stride 12, causing vertex data misinterpretation.
+        var mesh = this;
+        if (!HasNormals && IndexCount >= 3)
+            mesh = ComputeFlatNormals();
+
+        var vertexData = mesh.GetInterleavedVertices();
         var vertexBuffer = await device.CreateBufferAsync(new BufferDescriptor
         {
             Size = vertexData.Length * sizeof(float),
@@ -102,10 +110,10 @@ public sealed class Mesh
         await vertexBuffer.WriteAsync(vertexData, ct);
 
         GpuBuffer? indexBuffer = null;
-        if (IndexCount > 0)
+        if (mesh.IndexCount > 0)
         {
-            var indexBytes = new byte[Indices.Length * sizeof(uint)];
-            Buffer.BlockCopy(Indices, 0, indexBytes, 0, indexBytes.Length);
+            var indexBytes = new byte[mesh.Indices.Length * sizeof(uint)];
+            Buffer.BlockCopy(mesh.Indices, 0, indexBytes, 0, indexBytes.Length);
             indexBuffer = await device.CreateBufferAsync(new BufferDescriptor
             {
                 Size = indexBytes.Length,
@@ -118,9 +126,9 @@ public sealed class Mesh
         {
             VertexBuffer = vertexBuffer,
             IndexBuffer = indexBuffer,
-            Layout = GetVertexBufferLayout(),
-            VertexCount = VertexCount,
-            IndexCount = IndexCount,
+            Layout = mesh.GetVertexBufferLayout(),
+            VertexCount = mesh.VertexCount,
+            IndexCount = mesh.IndexCount,
         };
     }
 

@@ -1,0 +1,624 @@
+@page "/game"
+@layout WgpuSharp.Demo.Layout.EmptyLayout
+@using System.Numerics
+@using WgpuSharp.Core
+@using WgpuSharp.Commands
+@using WgpuSharp.Mesh
+@using WgpuSharp.Pipeline
+@using WgpuSharp.Resources
+@using WgpuSharp.Scene
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@implements IAsyncDisposable
+
+<PageTitle>@_gameTitle</PageTitle>
+
+<div class="game-root" style="position:relative;width:100vw;height:100vh;overflow:hidden;background:#000;">
+    <canvas id="game-canvas" width="800" height="600"
+            style="display:block;width:100%;height:100%;cursor:none;"></canvas>
+
+    @* --- HUD --- *@
+    @if (!_flyMode && _totalCollectibles > 0)
+    {
+        <div class="play-hud">
+            <span class="hud-score">@_score / @_totalCollectibles</span>
+            @if (_score >= _totalCollectibles)
+            {
+                <span class="hud-win">ALL COLLECTED!</span>
+            }
+        </div>
+    }
+    @if (_triggerMessage is not null)
+    {
+        <div class="trigger-message">@_triggerMessage</div>
+    }
+    @if (!_flyMode && _hasEnemies)
+    {
+        <div class="health-bar">
+            <div class="health-fill" style="width: @((int)(100.0 * _playerHealth / _maxPlayerHealth))%"></div>
+            <span class="health-text">@_playerHealth / @_maxPlayerHealth HP</span>
+        </div>
+        @if (_playerHealth <= 0)
+        {
+            <div class="game-over">GAME OVER</div>
+        }
+    }
+    @if (!_flyMode)
+    {
+        <canvas id="minimap-canvas" width="150" height="150"
+                style="position:absolute;bottom:10px;right:10px;border:1px solid #444;border-radius:4px;pointer-events:none;z-index:10;background:rgba(0,0,0,0.5);"></canvas>
+    }
+    @if (!_flyMode && _timerEnabled)
+    {
+        <div class="timer-hud">@TimeSpan.FromSeconds(Math.Max(0, _levelTimer)).ToString(@"m\:ss")</div>
+    }
+    <div class="play-crosshair">+</div>
+    @if (_winCondition != "none")
+    {
+        <div class="play-objective">@GetObjectiveText()</div>
+    }
+    @if (_speedIndicatorTimer > 0)
+    {
+        <div class="play-speed-indicator">Speed: @_fpsCamera.MoveSpeed.ToString("F1")</div>
+    }
+    @if (_startMessageTimer > 0 && !string.IsNullOrEmpty(_startMessage))
+    {
+        <div class="start-message">@_startMessage</div>
+    }
+
+    @* --- Camera mode toggle (top-right) --- *@
+    <div style="position:absolute;top:10px;right:10px;z-index:20;display:flex;gap:4px;">
+        <button class="btn btn-sm @(!_flyMode ? "btn-tool-on" : "btn-outline-secondary")" @onclick="SwitchToFps" style="font-size:0.75rem;">FPS</button>
+        <button class="btn btn-sm @(_flyMode ? "btn-tool-on" : "btn-outline-secondary")" @onclick="SwitchToFly" style="font-size:0.75rem;">Fly</button>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#1c1c2e;padding:20px;border-radius:8px;color:#f88;text-align:center;z-index:100;">
+            <div style="font-size:1.2rem;margin-bottom:8px;">Failed to load game</div>
+            <div style="color:#aaa;font-size:0.85rem;">@_error</div>
+        </div>
+    }
+
+    @if (_loading)
+    {
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#888;font-size:1.1rem;z-index:100;">Loading...</div>
+    }
+</div>
+
+@code {
+    private string? _error;
+    private bool _loading = true;
+    private float _fps;
+    private GpuLoop? _loop;
+    private GpuInput? _input;
+    private GpuDevice? _device;
+    private SceneRenderer? _renderer;
+    private readonly Scene _scene = new();
+    private readonly SceneSettings _settings = new();
+    private readonly FpsCamera _fpsCamera = new();
+    private readonly FreeLookCamera _freeLookCamera = new();
+    private bool _flyMode;
+
+    private string _gameTitle = "Game";
+
+    // Play-mode game state
+    private int _score;
+    private int _totalCollectibles;
+    private bool _hasEnemies;
+    private float _playTime;
+    private readonly HashSet<int> _collectedIds = new();
+
+    // Trigger zone state
+    private readonly HashSet<int> _activeTriggers = new();
+    private string? _triggerMessage;
+    private float _triggerMessageTimer;
+
+    // Teleporter state
+    private float _teleportCooldown;
+
+    // Door-and-key state
+    private readonly HashSet<string> _collectedKeys = new();
+
+    // Enemy/health state
+    private int _playerHealth;
+    private float _damageCooldown;
+    private float _damageZoneCooldown;
+
+    // Checkpoint state
+    private Vector3 _lastCheckpoint = Vector3.Zero;
+
+    // Timer
+    private float _levelTimer;
+    private float _levelTimerMax = 60f;
+    private bool _timerEnabled;
+
+    // Game settings
+    private float _playerSpeed = 5f;
+    private float _jumpHeight = 6f;
+    private float _gravity = 15f;
+    private int _maxPlayerHealth = 100;
+    private string _winCondition = "none";
+    private string _startMessage = "";
+    private float _startMessageTimer;
+    private float _speedIndicatorTimer;
+
+    // Script engine state
+    private Dictionary<int, (List<ScriptCommand> cmds, ScriptState state, Vector3 startPos)> _scriptData = new();
+    private Dictionary<int, (Vector3 pos, Quaternion rot, bool visible, bool solid)> _snapshot = new();
+
+    // Cached primitive meshes
+    private MeshBuffers? _cubeMesh;
+    private MeshBuffers? _sphereMesh;
+    private MeshBuffers? _sphereLod1;
+    private MeshBuffers? _sphereLod2;
+    private MeshBuffers? _planeMesh;
+    private MeshBuffers? _cylinderMesh;
+    private MeshBuffers? _cylinderLod1;
+    private MeshBuffers? _cylinderLod2;
+    private MeshBuffers? _lightMesh;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            _device = await adapter.RequestDeviceAsync();
+            var canvas = await GpuCanvas.ConfigureAsync(_device, "game-canvas");
+            _input = await GpuInput.InitAsync(_device, "game-canvas");
+
+            _renderer = await SceneRenderer.CreateAsync(_device, canvas.Format);
+
+            // Create cached primitive meshes + LODs
+            _cubeMesh = await Primitives.Cube().CreateBuffersAsync(_device);
+            _sphereMesh = await Primitives.Sphere().CreateBuffersAsync(_device);
+            _sphereLod1 = await Primitives.Sphere(10, 20).CreateBuffersAsync(_device);
+            _sphereLod2 = await Primitives.Sphere(6, 12).CreateBuffersAsync(_device);
+            _planeMesh = await Primitives.Plane(4).CreateBuffersAsync(_device);
+            _cylinderMesh = await Primitives.Cylinder().CreateBuffersAsync(_device);
+            _cylinderLod1 = await Primitives.Cylinder(16).CreateBuffersAsync(_device);
+            _cylinderLod2 = await Primitives.Cylinder(8).CreateBuffersAsync(_device);
+            _lightMesh = await Primitives.Sphere(8, 16).CreateBuffersAsync(_device);
+
+            // Load scene from query param: ?scene=myscene.json
+            var uri = new Uri(Nav.Uri);
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var sceneFile = query["scene"] ?? "scene.json";
+            _gameTitle = query["title"] ?? "Game";
+
+            string? json = null;
+            try
+            {
+                // Use JS fetch — HttpClient may not resolve correctly with app:// protocol
+                json = await JS.InvokeAsync<string>("eval", $"fetch('scenes/{sceneFile}').then(r=>r.ok?r.text():Promise.reject(r.status))");
+            }
+            catch
+            {
+                _error = $"Scene file not found: scenes/{sceneFile}";
+                _loading = false;
+                StateHasChanged();
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                _error = $"Scene file is empty: scenes/{sceneFile}";
+                _loading = false;
+                StateHasChanged();
+                return;
+            }
+
+            var data = SceneSerializer.Deserialize(json);
+            SceneSerializer.Rebuild(_scene, data, ResolveMeshFull);
+            SceneSerializer.RestoreSettings(data, _settings);
+
+            // Restore game settings from scene data
+            if (data.GameSettings is { } gs)
+            {
+                _playerSpeed = gs.PlayerSpeed ?? 5f;
+                _jumpHeight = gs.JumpHeight ?? 6f;
+                _gravity = gs.Gravity ?? 15f;
+                _maxPlayerHealth = gs.MaxPlayerHealth ?? 100;
+                _timerEnabled = gs.TimerEnabled ?? false;
+                _levelTimerMax = gs.TimerMax ?? 60f;
+                _winCondition = gs.WinCondition ?? "none";
+                _startMessage = gs.StartMessage ?? "";
+            }
+
+            // Initialize play state
+            InitPlayState();
+
+            _loading = false;
+            StateHasChanged();
+
+            // Resize canvas to display size
+            await canvas.ResizeToDisplaySizeAsync();
+
+            var depthTexture = await canvas.CreateDepthTextureAsync(_device);
+            var depthView = await depthTexture.CreateViewAsync();
+
+            _loop = await Gpu.RunLoopAsync(_device, async (frame) =>
+            {
+                _fps = frame.Fps;
+
+                if (await canvas.ResizeToDisplaySizeAsync())
+                {
+                    await depthTexture.DisposeAsync();
+                    depthTexture = await canvas.CreateDepthTextureAsync(_device);
+                    depthView = await depthTexture.CreateViewAsync();
+                }
+
+                var input = await _input!.GetStateAsync();
+
+                _scene.UpdateTransforms();
+                _playTime += frame.DeltaTime;
+
+                if (_startMessageTimer > 0) _startMessageTimer -= frame.DeltaTime;
+                if (_speedIndicatorTimer > 0) _speedIndicatorTimer -= frame.DeltaTime;
+
+                if (_flyMode)
+                {
+                    _freeLookCamera.ProcessInput(input, frame.DeltaTime);
+                    if (input.WheelDelta != 0) _speedIndicatorTimer = 1.5f;
+                    UpdateMovingPlatforms(frame.DeltaTime);
+                    ExecuteScripts(frame.DeltaTime);
+                    _scene.UpdateTransforms();
+
+                    var batch = new RenderBatch(_device);
+                    var colorView = batch.GetCurrentTextureView(canvas);
+                    _renderer!.Render(batch, _scene, _freeLookCamera, canvas, colorView, depthView, _settings);
+                    await batch.FlushAsync();
+                }
+                else
+                {
+                    _fpsCamera.ProcessInput(input, frame.DeltaTime, _scene);
+                    if (input.WheelDelta != 0) _speedIndicatorTimer = 1.5f;
+
+                    UpdateCollectibles(frame.DeltaTime);
+                    CheckTriggers(frame.DeltaTime);
+                    UpdateEnemies(frame.DeltaTime);
+                    UpdateDoorsAndKeys(frame.DeltaTime);
+                    UpdateTeleporters();
+                    UpdateDamageZones(frame.DeltaTime);
+                    UpdateHealthPickups();
+                    UpdateMovingPlatforms(frame.DeltaTime);
+                    CheckCheckpoints();
+                    UpdateNPCs();
+                    ExecuteScripts(frame.DeltaTime);
+
+                    if (_timerEnabled)
+                    {
+                        _levelTimer -= frame.DeltaTime;
+                        if (_levelTimer <= 0) { _levelTimer = 0; _playerHealth = 0; }
+                    }
+
+                    if (_playerHealth <= 0 && _damageCooldown <= 0)
+                    {
+                        _playerHealth = _maxPlayerHealth / 2;
+                        _fpsCamera.Position = _lastCheckpoint + new Vector3(0, FpsCamera.EyeHeight, 0);
+                        _damageCooldown = 2f;
+                    }
+
+                    _scene.UpdateTransforms();
+
+                    var batch = new RenderBatch(_device);
+                    var colorView = batch.GetCurrentTextureView(canvas);
+                    _renderer!.Render(batch, _scene, _fpsCamera, canvas, colorView, depthView, _settings);
+                    await batch.FlushAsync();
+
+                    await DrawMinimap();
+                }
+
+                StateHasChanged();
+            });
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void InitPlayState()
+    {
+        _fpsCamera.Position = new Vector3(0, FpsCamera.EyeHeight, 0);
+        _fpsCamera.MoveSpeed = _playerSpeed;
+        _fpsCamera.JumpVelocity = _jumpHeight;
+        _fpsCamera.GravityStrength = _gravity;
+        _freeLookCamera.Position = new Vector3(0, 5, 10);
+
+        _score = 0;
+        _playTime = 0;
+        _collectedIds.Clear();
+        _activeTriggers.Clear();
+        _collectedKeys.Clear();
+        _triggerMessage = null;
+        _triggerMessageTimer = 0;
+        _playerHealth = _maxPlayerHealth;
+        _damageCooldown = 0;
+        _damageZoneCooldown = 0;
+        _teleportCooldown = 0;
+        _lastCheckpoint = Vector3.Zero;
+        _levelTimer = _levelTimerMax;
+        _totalCollectibles = _scene.GetAllNodes().Count(n => n.Tag == NodeTag.Collectible);
+        _hasEnemies = _scene.GetAllNodes().Any(n => n.Tag == NodeTag.Enemy);
+        _startMessageTimer = string.IsNullOrEmpty(_startMessage) ? 0 : 3f;
+
+        // Snapshot transforms for moving platforms
+        _snapshot.Clear();
+        _scriptData.Clear();
+        foreach (var node in _scene.GetAllNodes())
+        {
+            _snapshot[node.Id] = (node.Transform.Position, node.Transform.Rotation, node.Visible, node.Solid);
+            if (!string.IsNullOrWhiteSpace(node.Script))
+            {
+                var (cmds, _) = ScriptEngine.ParseFull(node.Script);
+                if (cmds.Count > 0)
+                    _scriptData[node.Id] = (cmds, new ScriptState(), node.Transform.Position);
+            }
+        }
+
+        // Find spawn point (first node named "Start" or "Spawn")
+        var spawn = _scene.GetAllNodes().FirstOrDefault(n =>
+            n.Name.Contains("Start", StringComparison.OrdinalIgnoreCase) ||
+            n.Name.Contains("Spawn", StringComparison.OrdinalIgnoreCase));
+        if (spawn is not null)
+        {
+            var pos = spawn.Transform.WorldMatrix.Translation;
+            _fpsCamera.Position = pos + new Vector3(0, FpsCamera.EyeHeight, 0);
+            _lastCheckpoint = pos;
+        }
+    }
+
+    private void SwitchToFps()
+    {
+        if (!_flyMode) return;
+        _fpsCamera.Position = _freeLookCamera.Position;
+        _fpsCamera.Yaw = _freeLookCamera.Yaw;
+        _fpsCamera.Pitch = _freeLookCamera.Pitch;
+        _flyMode = false;
+    }
+
+    private void SwitchToFly()
+    {
+        if (_flyMode) return;
+        _freeLookCamera.InitFromFpsCamera(_fpsCamera);
+        _flyMode = true;
+    }
+
+    private string GetObjectiveText() => _winCondition switch
+    {
+        "collect_all" => $"Collect all items ({_score}/{_totalCollectibles})",
+        "reach_goal" => "Reach the goal",
+        "timer" => $"Survive for {TimeSpan.FromSeconds(Math.Max(0, _levelTimerMax - _playTime)):m\\:ss}",
+        _ => "",
+    };
+
+    // --- Mesh resolution ---
+
+    private MeshBuffers? ResolveMesh(string? meshType) => meshType switch
+    {
+        "Cube" => _cubeMesh,
+        "Sphere" => _sphereMesh,
+        "Plane" => _planeMesh,
+        "Cylinder" => _cylinderMesh,
+        "Light" => _lightMesh,
+        _ => null,
+    };
+
+    private MeshBuffers? ResolveMeshFull(string meshType, byte[]? importedData, string? importedFileName)
+    {
+        if (meshType == "Imported" && importedData is not null && importedFileName is not null)
+        {
+            var meshes = MeshLoader.Load(importedData, importedFileName);
+            if (meshes.Length > 0)
+            {
+                var mesh = meshes[0].HasNormals ? meshes[0] : meshes[0].ComputeFlatNormals();
+                return mesh.CreateBuffersAsync(_device!).GetAwaiter().GetResult();
+            }
+        }
+        return ResolveMesh(meshType);
+    }
+
+    // --- Gameplay methods (identical to SceneEditor) ---
+
+    private void UpdateCollectibles(float dt)
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.Collectible || !node.Visible || _collectedIds.Contains(node.Id)) continue;
+            var euler = node.Transform.EulerAngles;
+            euler.Y += 2f * dt;
+            node.Transform.EulerAngles = euler;
+            var basePos = _snapshot.TryGetValue(node.Id, out var snap) ? snap.pos : node.Transform.Position;
+            node.Transform.Position = basePos + new Vector3(0, MathF.Sin(_playTime * 3f) * 0.15f, 0);
+            var objPos = node.Transform.WorldMatrix.Translation;
+            var diff = playerPos - objPos; diff.Y *= 0.5f;
+            if (diff.Length() < 1f) { node.Visible = false; _collectedIds.Add(node.Id); _score++; }
+        }
+    }
+
+    private void CheckTriggers(float dt)
+    {
+        if (_triggerMessageTimer > 0) { _triggerMessageTimer -= dt; if (_triggerMessageTimer <= 0) _triggerMessage = null; }
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.Trigger || !node.Visible) continue;
+            var aabb = FpsCamera.ComputeWorldAABB(node.Transform.WorldMatrix);
+            bool inside = playerPos.X > aabb.Min.X && playerPos.X < aabb.Max.X
+                       && playerPos.Y > aabb.Min.Y && playerPos.Y < aabb.Max.Y + 1.8f
+                       && playerPos.Z > aabb.Min.Z && playerPos.Z < aabb.Max.Z;
+            if (inside && !_activeTriggers.Contains(node.Id)) { _activeTriggers.Add(node.Id); _triggerMessage = $"Entered: {node.Name}"; _triggerMessageTimer = 3f; }
+            else if (!inside) _activeTriggers.Remove(node.Id);
+        }
+    }
+
+    private void UpdateEnemies(float dt)
+    {
+        if (_playerHealth <= 0) return;
+        _damageCooldown = MathF.Max(0, _damageCooldown - dt);
+        var playerFeet = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.Enemy || !node.Visible) continue;
+            var pos = node.Transform.Position;
+            var toPlayer = playerFeet - pos; toPlayer.Y = 0; float dist = toPlayer.Length();
+            if (dist > 0.5f && dist < 12f) node.Transform.Position = pos + (toPlayer / dist) * MathF.Min(2.5f * dt, dist - 0.4f);
+            if (dist < 1.2f && _damageCooldown <= 0) { _playerHealth = Math.Max(0, _playerHealth - 10); _damageCooldown = 1f; }
+        }
+    }
+
+    private void UpdateDoorsAndKeys(float dt)
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag == NodeTag.Key && node.Visible && Vector3.Distance(playerPos, node.Transform.WorldMatrix.Translation) < 1.5f)
+            {
+                node.Visible = false;
+                _collectedKeys.Add(node.Name.Replace(" Key", "").Replace(" key", "").Trim());
+                _triggerMessage = $"Picked up: {node.Name}"; _triggerMessageTimer = 2f;
+            }
+        }
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.Door) continue;
+            var prefix = node.Name.Replace(" Door", "").Replace(" door", "").Trim();
+            if (_collectedKeys.Contains(prefix)) { node.Solid = false; node.Visible = false; }
+        }
+    }
+
+    private void UpdateTeleporters()
+    {
+        if (_teleportCooldown > 0) { _teleportCooldown -= 0.016f; return; }
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.Teleporter || !node.Visible) continue;
+            if (Vector3.Distance(playerPos, node.Transform.WorldMatrix.Translation) > 1.5f) continue;
+            var prefix = node.Name.Split(' ')[0];
+            foreach (var other in _scene.AllNodesCached)
+            {
+                if (other.Tag != NodeTag.Teleporter || other.Id == node.Id || !other.Visible || !other.Name.StartsWith(prefix)) continue;
+                _fpsCamera.Position = other.Transform.WorldMatrix.Translation + new Vector3(0, FpsCamera.EyeHeight, 0);
+                _teleportCooldown = 1f; _triggerMessage = $"Teleported to {other.Name}"; _triggerMessageTimer = 2f;
+                return;
+            }
+        }
+    }
+
+    private void UpdateDamageZones(float dt)
+    {
+        _damageZoneCooldown = MathF.Max(0, _damageZoneCooldown - dt);
+        if (_damageZoneCooldown > 0 || _playerHealth <= 0) return;
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.DamageZone || !node.Visible) continue;
+            var aabb = FpsCamera.ComputeWorldAABB(node.Transform.WorldMatrix);
+            bool inside = playerPos.X > aabb.Min.X && playerPos.X < aabb.Max.X
+                       && playerPos.Y > aabb.Min.Y && playerPos.Y < aabb.Max.Y + 1.8f
+                       && playerPos.Z > aabb.Min.Z && playerPos.Z < aabb.Max.Z;
+            if (inside) { _playerHealth = Math.Max(0, _playerHealth - 5); _damageZoneCooldown = 0.3f; return; }
+        }
+    }
+
+    private void UpdateHealthPickups()
+    {
+        if (_playerHealth >= _maxPlayerHealth) return;
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.HealthPickup || !node.Visible || _collectedIds.Contains(node.Id)) continue;
+            if (Vector3.Distance(playerPos, node.Transform.WorldMatrix.Translation) < 1.5f)
+            {
+                _playerHealth = Math.Min(_maxPlayerHealth, _playerHealth + 25);
+                node.Visible = false; _collectedIds.Add(node.Id);
+                _triggerMessage = "+25 HP"; _triggerMessageTimer = 1.5f;
+            }
+        }
+    }
+
+    private void UpdateMovingPlatforms(float dt)
+    {
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.MovingPlatform || !node.Visible) continue;
+            if (!_snapshot.TryGetValue(node.Id, out var snap)) continue;
+            var endPos = node.MoveTarget;
+            if (Vector3.DistanceSquared(snap.pos, endPos) < 0.01f) continue;
+            float t = (MathF.Sin(_playTime * 1.5f) + 1f) * 0.5f;
+            node.Transform.Position = Vector3.Lerp(snap.pos, endPos, t);
+        }
+    }
+
+    private void CheckCheckpoints()
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.Checkpoint || !node.Visible) continue;
+            var aabb = FpsCamera.ComputeWorldAABB(node.Transform.WorldMatrix);
+            bool inside = playerPos.X > aabb.Min.X && playerPos.X < aabb.Max.X
+                       && playerPos.Y > aabb.Min.Y && playerPos.Y < aabb.Max.Y + 1.8f
+                       && playerPos.Z > aabb.Min.Z && playerPos.Z < aabb.Max.Z;
+            if (inside)
+            {
+                var cp = node.Transform.WorldMatrix.Translation;
+                if (Vector3.Distance(cp, _lastCheckpoint) > 0.5f) { _lastCheckpoint = cp; _triggerMessage = $"Checkpoint: {node.Name}"; _triggerMessageTimer = 2f; }
+            }
+        }
+    }
+
+    private void UpdateNPCs()
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (node.Tag != NodeTag.NPC || !node.Visible) continue;
+            if (Vector3.Distance(playerPos, node.Transform.WorldMatrix.Translation) < 3f)
+            { _triggerMessage = node.Name; _triggerMessageTimer = 0.5f; return; }
+        }
+    }
+
+    private void ExecuteScripts(float dt)
+    {
+        var playerPos = _fpsCamera.Position - new Vector3(0, FpsCamera.EyeHeight, 0);
+        foreach (var (id, data) in _scriptData)
+        {
+            var node = _scene.FindById(id);
+            if (node is null || !node.Visible) continue;
+            ScriptEngine.Execute(node, data.cmds, data.state, data.startPos, dt, _playTime, playerPos, _scene,
+                (msg, dur) => { _triggerMessage = msg; _triggerMessageTimer = dur; });
+        }
+    }
+
+    private readonly List<object> _minimapDots = new(64);
+    private async Task DrawMinimap()
+    {
+        var p = _fpsCamera.Position;
+        _minimapDots.Clear();
+        _minimapDots.Add(new { x = p.X, z = p.Z, color = "#0f0", size = 4 });
+        foreach (var node in _scene.AllNodesCached)
+        {
+            if (!node.Visible) continue;
+            var pos = node.Transform.WorldMatrix.Translation;
+            if (node.Tag == NodeTag.Enemy) _minimapDots.Add(new { x = pos.X, z = pos.Z, color = "#f44", size = 3 });
+            else if (node.Tag == NodeTag.Collectible) _minimapDots.Add(new { x = pos.X, z = pos.Z, color = "#ff0", size = 2 });
+            else if (node.Tag == NodeTag.Key) _minimapDots.Add(new { x = pos.X, z = pos.Z, color = "#0ff", size = 2 });
+        }
+        await JS.InvokeVoidAsync("WgpuSharpEditor.drawMinimap", p.X, p.Z, _minimapDots);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_loop is not null) await _loop.DisposeAsync();
+        if (_renderer is not null) await _renderer.DisposeAsync();
+        if (_input is not null) await _input.DisposeAsync();
+    }
+}

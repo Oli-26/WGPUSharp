@@ -9,8 +9,20 @@ public sealed class Scene
 {
     private readonly List<SceneNode> _roots = [];
 
+    // Per-frame caches — call RefreshCaches() once per frame to populate
+    private readonly List<SceneNode> _allNodesCache = new(256);
+    private readonly List<SceneNode> _visibleMeshCache = new(256);
+    private readonly List<SceneNode> _lightCache = new(16);
+    private int _cacheFrame = -1;
+
     /// <summary>Top-level nodes in the scene.</summary>
     public IReadOnlyList<SceneNode> Roots => _roots;
+
+    /// <summary>Cached count of all nodes (valid after RefreshCaches).</summary>
+    public int NodeCount => _allNodesCache.Count;
+
+    /// <summary>Cached count of light nodes (valid after RefreshCaches).</summary>
+    public int LightCount => _lightCache.Count;
 
     /// <summary>The currently selected node (for editor interaction).</summary>
     public SceneNode? SelectedNode { get; set; }
@@ -20,6 +32,14 @@ public sealed class Scene
     {
         node.Detach();
         _roots.Add(node);
+    }
+
+    /// <summary>Insert a root-level node at a specific index.</summary>
+    public void Insert(SceneNode node, int index)
+    {
+        node.Detach();
+        index = Math.Clamp(index, 0, _roots.Count);
+        _roots.Insert(index, node);
     }
 
     /// <summary>Remove a root-level node from the scene.</summary>
@@ -90,6 +110,41 @@ public sealed class Scene
                 yield return node;
         }
     }
+
+    /// <summary>
+    /// Rebuild per-frame node caches. Call once per frame before gameplay/rendering.
+    /// Populates AllNodesCached, VisibleMeshNodesCached, and LightNodesCached.
+    /// </summary>
+    public void RefreshCaches(int frameIndex = 0)
+    {
+        if (_cacheFrame == frameIndex && frameIndex != 0) return;
+        _cacheFrame = frameIndex;
+
+        _allNodesCache.Clear();
+        _visibleMeshCache.Clear();
+        _lightCache.Clear();
+
+        foreach (var root in _roots)
+        {
+            foreach (var node in root.GetAllNodes())
+            {
+                _allNodesCache.Add(node);
+                if (node.Visible && (node.MeshBuffers is not null || node.SkinnedRenderData is not null))
+                    _visibleMeshCache.Add(node);
+                if (node.Visible && node.IsLight)
+                    _lightCache.Add(node);
+            }
+        }
+    }
+
+    /// <summary>All nodes cached from last RefreshCaches call. Zero allocation.</summary>
+    public List<SceneNode> AllNodesCached => _allNodesCache;
+
+    /// <summary>Visible mesh nodes cached from last RefreshCaches call. Zero allocation.</summary>
+    public List<SceneNode> VisibleMeshNodesCached => _visibleMeshCache;
+
+    /// <summary>Visible light nodes cached from last RefreshCaches call. Zero allocation.</summary>
+    public List<SceneNode> LightNodesCached => _lightCache;
 
     /// <summary>
     /// Update all world transforms. Call once per frame before rendering.

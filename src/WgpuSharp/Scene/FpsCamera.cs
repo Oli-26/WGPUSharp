@@ -21,8 +21,6 @@ public sealed class FpsCamera
     public const float EyeHeight = 1.6f;
     /// <summary>Player collision half-extents (width/2, height/2, depth/2).</summary>
     public static readonly Vector3 PlayerHalfExtents = new(0.3f, 0.9f, 0.3f);
-    private const float Gravity = 15f;
-    private const float JumpVelocity = 6f;
     private const float GroundY = 0f; // Global ground plane at Y=0
 
     /// <summary>Camera position in world space (eye position).</summary>
@@ -44,8 +42,17 @@ public sealed class FpsCamera
     /// <summary>Mouse sensitivity multiplier.</summary>
     public float LookSensitivity { get; set; } = 0.003f;
 
+    /// <summary>Gravity strength in units per second squared.</summary>
+    public float GravityStrength { get; set; } = 15f;
+
+    /// <summary>Vertical velocity applied when jumping.</summary>
+    public float JumpVelocity { get; set; } = 6f;
+
     /// <summary>Whether the player is standing on something.</summary>
     public bool IsGrounded => _grounded;
+
+    /// <summary>Current velocity vector. Can be set externally for game effects (springboards, knockback, etc.).</summary>
+    public Vector3 Velocity { get => _velocity; set => _velocity = value; }
 
     /// <summary>Forward direction based on yaw and pitch.</summary>
     public Vector3 Forward => new(
@@ -115,7 +122,7 @@ public sealed class FpsCamera
 
         // Gravity
         if (!_grounded)
-            _velocity.Y -= Gravity * deltaTime;
+            _velocity.Y -= GravityStrength * deltaTime;
 
         // Compute feet position (position is eye, feet are below)
         var feetPos = Position - new Vector3(0, EyeHeight, 0);
@@ -155,65 +162,56 @@ public sealed class FpsCamera
     /// </summary>
     private Vector3 ResolveCollisions(Vector3 oldFeet, Vector3 newFeet, Scene scene)
     {
+        const float pw = 0.3f; // player half-width
+        const float ph = 1.8f; // player height
+
         var result = newFeet;
 
-        foreach (var node in scene.GetVisibleMeshNodes())
+        // Two-pass collision: vertical first (landing/ceiling), then horizontal (walls).
+        // This prevents horizontal pushout from breaking vertical ground detection.
+        for (int pass = 0; pass < 2; pass++)
         {
-            if (node.IsLight) continue; // lights don't collide
-            if (!node.Solid) continue; // non-solid objects are walkthrough-able
-
-            var objAABB = ComputeWorldAABB(node.Transform.WorldMatrix);
-
-            // Player AABB: box from feet to feet+height, width from PlayerHalfExtents
-            const float pw = 0.3f; // half-width
-            const float ph = 1.8f; // full player height
-            var playerMin = new Vector3(result.X - pw, result.Y, result.Z - pw);
-            var playerMax = new Vector3(result.X + pw, result.Y + ph, result.Z + pw);
-
-            if (!AABBOverlap(playerMin, playerMax, objAABB.Min, objAABB.Max))
-                continue;
-
-            // Find minimum penetration axis and push out
-            float overlapX = MathF.Min(playerMax.X - objAABB.Min.X, objAABB.Max.X - playerMin.X);
-            float overlapY = MathF.Min(playerMax.Y - objAABB.Min.Y, objAABB.Max.Y - playerMin.Y);
-            float overlapZ = MathF.Min(playerMax.Z - objAABB.Min.Z, objAABB.Max.Z - playerMin.Z);
-
-            if (overlapX <= 0 || overlapY <= 0 || overlapZ <= 0) continue;
-
-            if (overlapY < overlapX && overlapY < overlapZ)
+            foreach (var node in scene.VisibleMeshNodesCached)
             {
-                // Push out vertically
-                if (result.Y + ph * 0.5f < (objAABB.Min.Y + objAABB.Max.Y) * 0.5f)
+                if (node.IsLight || !node.Solid) continue;
+
+                var obj = ComputeWorldAABB(node.Transform.WorldMatrix);
+                var pMin = new Vector3(result.X - pw, result.Y, result.Z - pw);
+                var pMax = new Vector3(result.X + pw, result.Y + ph, result.Z + pw);
+
+                if (!AABBOverlap(pMin, pMax, obj.Min, obj.Max)) continue;
+
+                float ox = MathF.Min(pMax.X - obj.Min.X, obj.Max.X - pMin.X);
+                float oy = MathF.Min(pMax.Y - obj.Min.Y, obj.Max.Y - pMin.Y);
+                float oz = MathF.Min(pMax.Z - obj.Min.Z, obj.Max.Z - pMin.Z);
+                if (ox <= 0 || oy <= 0 || oz <= 0) continue;
+
+                if (pass == 0)
                 {
-                    // Player is below — push down (hit ceiling)
-                    result.Y = objAABB.Min.Y - ph;
-                    if (_velocity.Y > 0) _velocity.Y = 0;
+                    // Pass 1: only resolve vertical overlaps
+                    if (oy >= ox || oy >= oz) continue;
+                    if (result.Y + ph * 0.5f < (obj.Min.Y + obj.Max.Y) * 0.5f)
+                    { result.Y = obj.Min.Y - ph; if (_velocity.Y > 0) _velocity.Y = 0; }
+                    else
+                    { result.Y = obj.Max.Y; if (_velocity.Y < 0) _velocity.Y = 0; _grounded = true; }
                 }
                 else
                 {
-                    // Player is above — land on top
-                    result.Y = objAABB.Max.Y;
-                    if (_velocity.Y < 0) _velocity.Y = 0;
-                    _grounded = true;
+                    // Pass 2: only resolve horizontal overlaps
+                    if (oy < ox && oy < oz) continue;
+                    if (ox < oz)
+                    {
+                        if (result.X < (obj.Min.X + obj.Max.X) * 0.5f) result.X = obj.Min.X - pw;
+                        else result.X = obj.Max.X + pw;
+                        _velocity.X = 0;
+                    }
+                    else
+                    {
+                        if (result.Z < (obj.Min.Z + obj.Max.Z) * 0.5f) result.Z = obj.Min.Z - pw;
+                        else result.Z = obj.Max.Z + pw;
+                        _velocity.Z = 0;
+                    }
                 }
-            }
-            else if (overlapX < overlapZ)
-            {
-                // Push out on X
-                if (result.X < (objAABB.Min.X + objAABB.Max.X) * 0.5f)
-                    result.X = objAABB.Min.X - pw;
-                else
-                    result.X = objAABB.Max.X + pw;
-                _velocity.X = 0;
-            }
-            else
-            {
-                // Push out on Z
-                if (result.Z < (objAABB.Min.Z + objAABB.Max.Z) * 0.5f)
-                    result.Z = objAABB.Min.Z - pw;
-                else
-                    result.Z = objAABB.Max.Z + pw;
-                _velocity.Z = 0;
             }
         }
 
@@ -230,7 +228,7 @@ public sealed class FpsCamera
         var checkMin = new Vector3(feetPos.X - pw, feetPos.Y - 0.05f, feetPos.Z - pw);
         var checkMax = new Vector3(feetPos.X + pw, feetPos.Y + 0.01f, feetPos.Z + pw);
 
-        foreach (var node in scene.GetVisibleMeshNodes())
+        foreach (var node in scene.VisibleMeshNodesCached)
         {
             if (node.IsLight) continue;
             if (!node.Solid) continue;

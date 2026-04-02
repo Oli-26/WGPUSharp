@@ -20,6 +20,9 @@ public sealed class RenderBatch
         _device = device;
     }
 
+    /// <summary>Reset the batch for reuse next frame (avoids per-frame allocation).</summary>
+    public void Reset() => _batch.Reset();
+
     /// <summary>
     /// Write data to a buffer (queued, executes with the batch).
     /// </summary>
@@ -33,7 +36,15 @@ public sealed class RenderBatch
     /// </summary>
     public void WriteBuffer(GpuBuffer buffer, float[] data)
     {
-        _batch.WriteBuffer(_device.Handle, buffer.Handle, data);
+        _batch.WriteBuffer(_device.Handle, buffer.Handle, data, data.Length);
+    }
+
+    /// <summary>
+    /// Write a portion of float data to a buffer (queued, executes with the batch).
+    /// </summary>
+    public void WriteBuffer(GpuBuffer buffer, float[] data, int floatCount)
+    {
+        _batch.WriteBuffer(_device.Handle, buffer.Handle, data, floatCount);
     }
 
     /// <summary>
@@ -192,7 +203,7 @@ public sealed class RenderBatch
     {
         if (_batch.CommandCount == 0) return;
 
-        var writes = _batch.HasBufferWrites ? _batch.GetBufferWrites() : null;
+        var writes = _batch.HasBufferWrites ? _batch.GetBufferWritesList() : null;
         await _device.Bridge.ExecuteBatchAsync(_batch.GetCommands(), writes, ct);
     }
 }

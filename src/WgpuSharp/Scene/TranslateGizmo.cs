@@ -42,11 +42,13 @@ public sealed class TranslateGizmo : IAsyncDisposable
     private GpuBindGroup _bindGroup = null!;
     private bool _disposed;
 
-    // Gizmo geometry: 3 axis lines + arrowheads = fixed vertex count
-    private const int VerticesPerAxis = 6; // main line (2) + arrowhead lines (2+2)
-    private const int TotalVertices = VerticesPerAxis * 3;
+    // Vertex budget: thick arrows (3 parallel lines * 3 axes * 6 verts = 54, arrowheads ~30)
+    // + rotation rings (48*2*3) + highlight ring (48*2) + sweep arc (48*2) + scale axes (~84)
+    private const int RingSegments = 48;
+    private const int MaxVertices = 900;
     private const int FloatsPerVertex = 7; // pos(3) + color(4)
-    private readonly float[] _vertexData = new float[TotalVertices * FloatsPerVertex];
+    private readonly float[] _vertexData = new float[MaxVertices * FloatsPerVertex];
+    private int _drawVertexCount;
 
     /// <summary>Whether the gizmo is visible.</summary>
     public bool Enabled { get; set; } = true;
@@ -70,6 +72,10 @@ public sealed class TranslateGizmo : IAsyncDisposable
 
     // Rotate drag state
     private Quaternion _dragStartRotation;
+    private Vector3 _dragStartPlaneDir; // direction from center to initial hit on ring plane
+
+    /// <summary>Current drag angle in radians (for visual arc feedback).</summary>
+    public float DragAngle { get; private set; }
 
     // Scale drag state
     private Vector3 _dragStartScale;
@@ -91,7 +97,7 @@ public sealed class TranslateGizmo : IAsyncDisposable
 
         _vertexBuffer = await _device.CreateBufferAsync(new BufferDescriptor
         {
-            Size = _vertexData.Length * sizeof(float),
+            Size = MaxVertices * FloatsPerVertex * sizeof(float),
             Usage = BufferUsage.Vertex | BufferUsage.CopyDest,
         }, ct);
 
@@ -144,6 +150,7 @@ public sealed class TranslateGizmo : IAsyncDisposable
     private Vector3 _lastWorldPos;
     private float _lastCamDist;
     private GizmoAxis _lastHovered;
+    private GizmoMode _lastMode;
 
     public void Update(RenderBatch batch, Vector3 worldPos, float cameraDistance)
     {
@@ -151,22 +158,43 @@ public sealed class TranslateGizmo : IAsyncDisposable
         bool needsUpdate = worldPos != _lastWorldPos
             || MathF.Abs(cameraDistance - _lastCamDist) > 0.01f
             || HoveredAxis != _lastHovered
+            || Mode != _lastMode
             || IsDragging;
         if (!needsUpdate) return;
         _lastWorldPos = worldPos;
         _lastCamDist = cameraDistance;
         _lastHovered = HoveredAxis;
+        _lastMode = Mode;
 
         // Scale gizmo so it's a consistent screen size regardless of zoom
-        float size = cameraDistance * 0.12f;
-        float arrowSize = size * 0.15f;
+        float size = cameraDistance * 0.18f;
+        float arrowSize = size * 0.18f;
 
         int vi = 0;
-        WriteAxis(ref vi, worldPos, Vector3.UnitX, size, arrowSize, GizmoAxis.X);
-        WriteAxis(ref vi, worldPos, Vector3.UnitY, size, arrowSize, GizmoAxis.Y);
-        WriteAxis(ref vi, worldPos, Vector3.UnitZ, size, arrowSize, GizmoAxis.Z);
+        switch (Mode)
+        {
+            case GizmoMode.Translate:
+                WriteTranslateAxis(ref vi, worldPos, Vector3.UnitX, size, arrowSize, GizmoAxis.X);
+                WriteTranslateAxis(ref vi, worldPos, Vector3.UnitY, size, arrowSize, GizmoAxis.Y);
+                WriteTranslateAxis(ref vi, worldPos, Vector3.UnitZ, size, arrowSize, GizmoAxis.Z);
+                break;
+            case GizmoMode.Rotate:
+                WriteRotateRing(ref vi, worldPos, Vector3.UnitX, size, GizmoAxis.X);
+                WriteRotateRing(ref vi, worldPos, Vector3.UnitY, size, GizmoAxis.Y);
+                WriteRotateRing(ref vi, worldPos, Vector3.UnitZ, size, GizmoAxis.Z);
+                // Draw sweep arc for active drag
+                if (IsDragging && MathF.Abs(DragAngle) > 0.01f)
+                    WriteSweepArc(ref vi, worldPos, _dragAxisDir, size, DragAxis);
+                break;
+            case GizmoMode.Scale:
+                WriteScaleAxis(ref vi, worldPos, Vector3.UnitX, size, arrowSize, GizmoAxis.X);
+                WriteScaleAxis(ref vi, worldPos, Vector3.UnitY, size, arrowSize, GizmoAxis.Y);
+                WriteScaleAxis(ref vi, worldPos, Vector3.UnitZ, size, arrowSize, GizmoAxis.Z);
+                break;
+        }
+        _drawVertexCount = vi;
 
-        batch.WriteBuffer(_vertexBuffer, _vertexData);
+        batch.WriteBuffer(_vertexBuffer, _vertexData, _drawVertexCount * FloatsPerVertex);
     }
 
     /// <summary>Draw the gizmo within an existing render pass.</summary>
@@ -177,7 +205,7 @@ public sealed class TranslateGizmo : IAsyncDisposable
         pass.SetPipeline(_pipeline);
         pass.SetBindGroup(0, _bindGroup);
         pass.SetVertexBuffer(0, _vertexBuffer);
-        pass.Draw(TotalVertices);
+        pass.Draw(_drawVertexCount);
     }
 
     /// <summary>
@@ -186,16 +214,26 @@ public sealed class TranslateGizmo : IAsyncDisposable
     /// </summary>
     public GizmoAxis HitTest(Ray ray, Vector3 gizmoPos, float cameraDistance)
     {
-        float size = cameraDistance * 0.12f;
-        float threshold = size * 0.08f; // hit tolerance
+        float size = cameraDistance * 0.18f;
+        float threshold = size * 0.18f; // generous hit tolerance
 
         var bestAxis = GizmoAxis.None;
         float bestDist = float.MaxValue;
 
-        // Test each axis
-        TestAxisHit(ray, gizmoPos, Vector3.UnitX, size, threshold, GizmoAxis.X, ref bestAxis, ref bestDist);
-        TestAxisHit(ray, gizmoPos, Vector3.UnitY, size, threshold, GizmoAxis.Y, ref bestAxis, ref bestDist);
-        TestAxisHit(ray, gizmoPos, Vector3.UnitZ, size, threshold, GizmoAxis.Z, ref bestAxis, ref bestDist);
+        if (Mode == GizmoMode.Rotate)
+        {
+            // For rotation, test proximity to ring circumference
+            TestRingHit(ray, gizmoPos, Vector3.UnitX, size, threshold, GizmoAxis.X, ref bestAxis, ref bestDist);
+            TestRingHit(ray, gizmoPos, Vector3.UnitY, size, threshold, GizmoAxis.Y, ref bestAxis, ref bestDist);
+            TestRingHit(ray, gizmoPos, Vector3.UnitZ, size, threshold, GizmoAxis.Z, ref bestAxis, ref bestDist);
+        }
+        else
+        {
+            // Translate and scale both use axis lines
+            TestAxisHit(ray, gizmoPos, Vector3.UnitX, size, threshold, GizmoAxis.X, ref bestAxis, ref bestDist);
+            TestAxisHit(ray, gizmoPos, Vector3.UnitY, size, threshold, GizmoAxis.Y, ref bestAxis, ref bestDist);
+            TestAxisHit(ray, gizmoPos, Vector3.UnitZ, size, threshold, GizmoAxis.Z, ref bestAxis, ref bestDist);
+        }
 
         return bestAxis;
     }
@@ -206,6 +244,7 @@ public sealed class TranslateGizmo : IAsyncDisposable
         if (axis == GizmoAxis.None) return;
 
         DragAxis = axis;
+        DragAngle = 0;
         _dragStartPos = objectPos;
         _dragStartRotation = objectRot;
         _dragStartScale = objectScale;
@@ -217,6 +256,24 @@ public sealed class TranslateGizmo : IAsyncDisposable
             _ => Vector3.Zero,
         };
         _dragStartProjection = ProjectRayOntoAxis(ray, _dragStartPos, _dragAxisDir);
+
+        // For rotation: store the initial direction from center to hit point on the ring plane
+        if (Mode == GizmoMode.Rotate)
+        {
+            float denom = Vector3.Dot(_dragAxisDir, ray.Direction);
+            if (MathF.Abs(denom) > 1e-6f)
+            {
+                float t = Vector3.Dot(_dragStartPos - ray.Origin, _dragAxisDir) / denom;
+                var hitPoint = ray.Origin + ray.Direction * t;
+                var toHit = hitPoint - _dragStartPos;
+                float len = toHit.Length();
+                _dragStartPlaneDir = len > 1e-6f ? toHit / len : GetPerpendicular(_dragAxisDir);
+            }
+            else
+            {
+                _dragStartPlaneDir = GetPerpendicular(_dragAxisDir);
+            }
+        }
     }
 
     /// <summary>Convenience overload for translate-only (backwards compat).</summary>
@@ -235,13 +292,29 @@ public sealed class TranslateGizmo : IAsyncDisposable
 
     /// <summary>
     /// Update the drag for Rotate mode, returning the new rotation.
+    /// Uses angular projection on the ring plane for natural circular dragging.
     /// </summary>
     public Quaternion UpdateRotateDrag(Ray ray)
     {
         if (DragAxis == GizmoAxis.None) return _dragStartRotation;
-        float delta = ProjectRayOntoAxis(ray, _dragStartPos, _dragAxisDir) - _dragStartProjection;
-        // Convert linear drag delta to angle (radians). ~1 unit drag = 1 radian
-        float angle = delta;
+
+        // Intersect ray with the ring's plane
+        float denom = Vector3.Dot(_dragAxisDir, ray.Direction);
+        if (MathF.Abs(denom) < 1e-6f) return _dragStartRotation;
+
+        float t = Vector3.Dot(_dragStartPos - ray.Origin, _dragAxisDir) / denom;
+        var hitPoint = ray.Origin + ray.Direction * t;
+        var toHit = hitPoint - _dragStartPos;
+        float len = toHit.Length();
+        if (len < 1e-6f) return _dragStartRotation;
+        toHit /= len; // normalize
+
+        // Calculate angle between start direction and current direction on the plane
+        float cosAngle = Math.Clamp(Vector3.Dot(_dragStartPlaneDir, toHit), -1f, 1f);
+        float sinAngle = Vector3.Dot(Vector3.Cross(_dragStartPlaneDir, toHit), _dragAxisDir);
+        float angle = MathF.Atan2(sinAngle, cosAngle);
+
+        DragAngle = angle;
         var rotation = Quaternion.CreateFromAxisAngle(_dragAxisDir, angle);
         return Quaternion.Normalize(rotation * _dragStartRotation);
     }
@@ -273,25 +346,147 @@ public sealed class TranslateGizmo : IAsyncDisposable
         DragAxis = GizmoAxis.None;
     }
 
-    private void WriteAxis(ref int vi, Vector3 origin, Vector3 dir, float size, float arrowSize, GizmoAxis axis)
+    // --- Translate: arrow lines ---
+
+    private void WriteTranslateAxis(ref int vi, Vector3 origin, Vector3 dir, float size, float arrowSize, GizmoAxis axis)
     {
         bool highlighted = HoveredAxis == axis || DragAxis == axis;
         var color = GetAxisColor(axis, highlighted);
         var tip = origin + dir * size;
-
-        // Main line
-        WriteVertex(ref vi, origin, color);
-        WriteVertex(ref vi, tip, color);
-
-        // Arrowhead — two diagonal lines from the tip
         var perp1 = GetPerpendicular(dir);
         var perp2 = Vector3.Cross(dir, perp1);
+        float thickness = size * 0.012f;
+
+        // Draw 3 parallel lines for thickness (center + 2 offset)
+        WriteVertex(ref vi, origin, color);
+        WriteVertex(ref vi, tip, color);
+        WriteVertex(ref vi, origin + perp1 * thickness, color);
+        WriteVertex(ref vi, tip + perp1 * thickness, color);
+        WriteVertex(ref vi, origin - perp1 * thickness, color);
+        WriteVertex(ref vi, tip - perp1 * thickness, color);
+        WriteVertex(ref vi, origin + perp2 * thickness, color);
+        WriteVertex(ref vi, tip + perp2 * thickness, color);
+
+        // Arrowhead — 4 diagonal lines for a pyramid shape
         var arrowBase = tip - dir * arrowSize;
+        float arrowWidth = arrowSize * 0.5f;
 
         WriteVertex(ref vi, tip, color);
-        WriteVertex(ref vi, arrowBase + perp1 * arrowSize * 0.5f, color);
+        WriteVertex(ref vi, arrowBase + perp1 * arrowWidth, color);
         WriteVertex(ref vi, tip, color);
-        WriteVertex(ref vi, arrowBase - perp1 * arrowSize * 0.5f, color);
+        WriteVertex(ref vi, arrowBase - perp1 * arrowWidth, color);
+        WriteVertex(ref vi, tip, color);
+        WriteVertex(ref vi, arrowBase + perp2 * arrowWidth, color);
+        WriteVertex(ref vi, tip, color);
+        WriteVertex(ref vi, arrowBase - perp2 * arrowWidth, color);
+        // Cross at arrowhead base for solidity
+        WriteVertex(ref vi, arrowBase + perp1 * arrowWidth, color);
+        WriteVertex(ref vi, arrowBase - perp1 * arrowWidth, color);
+        WriteVertex(ref vi, arrowBase + perp2 * arrowWidth, color);
+        WriteVertex(ref vi, arrowBase - perp2 * arrowWidth, color);
+    }
+
+    // --- Rotate: ring circles ---
+
+    private void WriteRotateRing(ref int vi, Vector3 origin, Vector3 axis, float radius, GizmoAxis gizmoAxis)
+    {
+        bool highlighted = HoveredAxis == gizmoAxis || DragAxis == gizmoAxis;
+        var color = GetAxisColor(gizmoAxis, highlighted);
+        var perp1 = GetPerpendicular(axis);
+        var perp2 = Vector3.Cross(axis, perp1);
+
+        for (int i = 0; i < RingSegments; i++)
+        {
+            float a1 = i * MathF.Tau / RingSegments;
+            float a2 = (i + 1) * MathF.Tau / RingSegments;
+            var p1 = origin + (perp1 * MathF.Cos(a1) + perp2 * MathF.Sin(a1)) * radius;
+            var p2 = origin + (perp1 * MathF.Cos(a2) + perp2 * MathF.Sin(a2)) * radius;
+            WriteVertex(ref vi, p1, color);
+            WriteVertex(ref vi, p2, color);
+        }
+
+        // Thicker appearance when highlighted: draw a second ring slightly offset
+        if (highlighted)
+        {
+            float offset = radius * 0.02f;
+            for (int i = 0; i < RingSegments; i++)
+            {
+                float a1 = i * MathF.Tau / RingSegments;
+                float a2 = (i + 1) * MathF.Tau / RingSegments;
+                var p1 = origin + (perp1 * MathF.Cos(a1) + perp2 * MathF.Sin(a1)) * (radius + offset);
+                var p2 = origin + (perp1 * MathF.Cos(a2) + perp2 * MathF.Sin(a2)) * (radius + offset);
+                WriteVertex(ref vi, p1, color);
+                WriteVertex(ref vi, p2, color);
+            }
+        }
+    }
+
+    // --- Rotate: sweep arc showing drag angle ---
+
+    private void WriteSweepArc(ref int vi, Vector3 origin, Vector3 axis, float radius, GizmoAxis gizmoAxis)
+    {
+        var color = GetAxisColor(gizmoAxis, true);
+        color.W = 0.5f; // semi-transparent
+        var perp1 = GetPerpendicular(axis);
+        var perp2 = Vector3.Cross(axis, perp1);
+
+        // Find start angle in the ring's local coordinate space
+        float startAngle = MathF.Atan2(
+            Vector3.Dot(_dragStartPlaneDir, perp2),
+            Vector3.Dot(_dragStartPlaneDir, perp1));
+
+        int arcSegments = Math.Min(RingSegments, Math.Max(4,
+            (int)(MathF.Abs(DragAngle) / MathF.Tau * RingSegments)));
+        float step = DragAngle / arcSegments;
+        float innerRadius = radius * 0.82f;
+
+        for (int i = 0; i < arcSegments; i++)
+        {
+            float a1 = startAngle + step * i;
+            float a2 = startAngle + step * (i + 1);
+            var p1 = origin + (perp1 * MathF.Cos(a1) + perp2 * MathF.Sin(a1)) * innerRadius;
+            var p2 = origin + (perp1 * MathF.Cos(a2) + perp2 * MathF.Sin(a2)) * innerRadius;
+            WriteVertex(ref vi, p1, color);
+            WriteVertex(ref vi, p2, color);
+        }
+    }
+
+    // --- Scale: axis lines with box endpoints ---
+
+    private void WriteScaleAxis(ref int vi, Vector3 origin, Vector3 dir, float size, float boxSize, GizmoAxis axis)
+    {
+        bool highlighted = HoveredAxis == axis || DragAxis == axis;
+        var color = GetAxisColor(axis, highlighted);
+        var tip = origin + dir * size;
+        var perp1 = GetPerpendicular(dir);
+        var perp2 = Vector3.Cross(dir, perp1);
+        float thickness = size * 0.012f;
+
+        // Draw 3 parallel lines for thickness
+        WriteVertex(ref vi, origin, color);
+        WriteVertex(ref vi, tip, color);
+        WriteVertex(ref vi, origin + perp1 * thickness, color);
+        WriteVertex(ref vi, tip + perp1 * thickness, color);
+        WriteVertex(ref vi, origin - perp1 * thickness, color);
+        WriteVertex(ref vi, tip - perp1 * thickness, color);
+        WriteVertex(ref vi, origin + perp2 * thickness, color);
+        WriteVertex(ref vi, tip + perp2 * thickness, color);
+
+        // Box at the tip — diamond shape
+        float half = boxSize * 0.45f;
+        WriteVertex(ref vi, tip - perp1 * half, color);
+        WriteVertex(ref vi, tip + perp1 * half, color);
+        WriteVertex(ref vi, tip - perp2 * half, color);
+        WriteVertex(ref vi, tip + perp2 * half, color);
+        // Box outline
+        WriteVertex(ref vi, tip + perp1 * half, color);
+        WriteVertex(ref vi, tip + perp2 * half, color);
+        WriteVertex(ref vi, tip + perp2 * half, color);
+        WriteVertex(ref vi, tip - perp1 * half, color);
+        WriteVertex(ref vi, tip - perp1 * half, color);
+        WriteVertex(ref vi, tip - perp2 * half, color);
+        WriteVertex(ref vi, tip - perp2 * half, color);
+        WriteVertex(ref vi, tip + perp1 * half, color);
     }
 
     private void WriteVertex(ref int vi, Vector3 pos, Vector4 color)
@@ -304,13 +499,15 @@ public sealed class TranslateGizmo : IAsyncDisposable
 
     private static Vector4 GetAxisColor(GizmoAxis axis, bool highlighted)
     {
-        float bright = highlighted ? 1f : 0.8f;
-        float dim = highlighted ? 0.2f : 0.1f;
-        return axis switch
+        // Brighter, more saturated colors for better visibility
+        return (axis, highlighted) switch
         {
-            GizmoAxis.X => new Vector4(bright, dim, dim, 1f),
-            GizmoAxis.Y => new Vector4(dim, bright, dim, 1f),
-            GizmoAxis.Z => new Vector4(dim, dim * 1.5f, bright, 1f),
+            (GizmoAxis.X, true)  => new Vector4(1.0f, 0.25f, 0.25f, 1f),
+            (GizmoAxis.X, false) => new Vector4(0.85f, 0.15f, 0.15f, 1f),
+            (GizmoAxis.Y, true)  => new Vector4(0.3f, 1.0f, 0.3f, 1f),
+            (GizmoAxis.Y, false) => new Vector4(0.15f, 0.85f, 0.15f, 1f),
+            (GizmoAxis.Z, true)  => new Vector4(0.3f, 0.4f, 1.0f, 1f),
+            (GizmoAxis.Z, false) => new Vector4(0.15f, 0.25f, 0.85f, 1f),
             _ => new Vector4(0.5f, 0.5f, 0.5f, 1f),
         };
     }
@@ -320,6 +517,25 @@ public sealed class TranslateGizmo : IAsyncDisposable
         if (MathF.Abs(dir.Y) < 0.99f)
             return Vector3.Normalize(Vector3.Cross(dir, Vector3.UnitY));
         return Vector3.Normalize(Vector3.Cross(dir, Vector3.UnitX));
+    }
+
+    private static void TestRingHit(Ray ray, Vector3 center, Vector3 normal, float radius, float threshold,
+        GizmoAxis axis, ref GizmoAxis bestAxis, ref float bestDist)
+    {
+        // Intersect ray with the plane defined by center + normal
+        float denom = Vector3.Dot(normal, ray.Direction);
+        if (MathF.Abs(denom) < 1e-6f) return; // parallel to plane
+        float t = Vector3.Dot(center - ray.Origin, normal) / denom;
+        if (t < 0) return; // behind camera
+        var hitPoint = ray.Origin + ray.Direction * t;
+        // Distance from ring circumference
+        float distFromCenter = Vector3.Distance(hitPoint, center);
+        float distFromRing = MathF.Abs(distFromCenter - radius);
+        if (distFromRing < threshold * 3f && distFromRing < bestDist)
+        {
+            bestDist = distFromRing;
+            bestAxis = axis;
+        }
     }
 
     private static void TestAxisHit(Ray ray, Vector3 origin, Vector3 axisDir, float size, float threshold,

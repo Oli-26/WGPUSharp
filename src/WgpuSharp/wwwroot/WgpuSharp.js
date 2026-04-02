@@ -62,11 +62,21 @@ window.WgpuSharp = {
     },
 
     // Adapter
-    async requestAdapter() {
+    async requestAdapter(preferHighPerformance) {
         if (!navigator.gpu) {
             throw new Error("WebGPU is not supported in this browser. Use Chrome/Edge with WebGPU enabled (chrome://flags/#enable-unsafe-webgpu).");
         }
-        const adapter = await navigator.gpu.requestAdapter();
+        // On Linux, high-performance can trigger Vulkan driver bugs (Dawn shared
+        // image import failures, swap chain hangs). Default to safe unless opted in.
+        let adapter = null;
+        if (preferHighPerformance) {
+            try {
+                adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+            } catch (_) { /* driver issues — fall back */ }
+        }
+        if (!adapter) {
+            adapter = await navigator.gpu.requestAdapter();
+        }
         if (!adapter) {
             throw new Error("Failed to get GPU adapter. On Linux, enable WebGPU via chrome://flags/#enable-unsafe-webgpu or launch with: --enable-features=Vulkan --enable-unsafe-webgpu");
         }
@@ -75,16 +85,23 @@ window.WgpuSharp = {
 
     async getAdapterInfo(adapterId) {
         const adapter = get(adapterId);
-        // requestAdapterInfo may require user gesture in some browsers
         try {
-            const info = await adapter.requestAdapterInfo();
+            let info = null;
+            // Try all known ways to get adapter info
+            if (adapter.info && typeof adapter.info === 'object') {
+                info = adapter.info;
+            } else if (typeof adapter.requestAdapterInfo === 'function') {
+                info = await adapter.requestAdapterInfo();
+            }
+            if (!info) return { vendor: "", architecture: "", device: "", description: "" };
             return {
                 vendor: info.vendor || "",
                 architecture: info.architecture || "",
                 device: info.device || "",
                 description: info.description || "",
             };
-        } catch (_) {
+        } catch (e) {
+            console.warn('[WgpuSharp] getAdapterInfo failed:', e);
             return { vendor: "", architecture: "", device: "", description: "" };
         }
     },
@@ -178,10 +195,13 @@ window.WgpuSharp = {
 
     getCanvasDisplaySize(canvasId) {
         const canvas = document.getElementById(canvasId);
-        return {
-            width: Math.round(canvas.clientWidth * (window.devicePixelRatio || 1)),
-            height: Math.round(canvas.clientHeight * (window.devicePixelRatio || 1)),
-        };
+        const dpr = window.devicePixelRatio || 1;
+        // Round to even numbers to avoid Vulkan texture alignment issues
+        // at fractional DPR (known Dawn bug on Linux with 125%/150% scaling)
+        let w = Math.round(canvas.clientWidth * dpr);
+        let h = Math.round(canvas.clientHeight * dpr);
+        if (dpr % 1 !== 0) { w = w & ~1; h = h & ~1; } // force even
+        return { width: w, height: h };
     },
 
     setCanvasSize(canvasId, width, height) {
@@ -194,6 +214,11 @@ window.WgpuSharp = {
         const ctx = get(contextId);
         const texture = ctx.getCurrentTexture();
         return storeFrame(texture);
+    },
+
+    getTextureSize(textureId) {
+        const texture = get(textureId);
+        return { width: texture.width, height: texture.height };
     },
 
     createTextureView(textureId) {
@@ -596,7 +621,20 @@ window.WgpuSharp = {
         const writes = {};
         if (bufferWrites) {
             for (const w of bufferWrites) {
-                writes[w.key] = Uint8Array.from(atob(w.data), c => c.charCodeAt(0));
+                // Use Uint8Array.from for cleaner decoding
+                const bin = atob(w.data);
+                const arr = new Uint8Array(bin.length);
+                // Unrolled loop — process 4 bytes at a time
+                const len = bin.length;
+                let i = 0;
+                for (; i + 3 < len; i += 4) {
+                    arr[i]     = bin.charCodeAt(i);
+                    arr[i + 1] = bin.charCodeAt(i + 1);
+                    arr[i + 2] = bin.charCodeAt(i + 2);
+                    arr[i + 3] = bin.charCodeAt(i + 3);
+                }
+                for (; i < len; i++) arr[i] = bin.charCodeAt(i);
+                writes[w.key] = arr;
             }
         }
 
@@ -746,6 +784,7 @@ window.WgpuSharp = {
             inputState.shiftKey = e.shiftKey;
         };
         const onMouseMove = (e) => {
+            const dpr = window.devicePixelRatio || 1;
             if (inputState.pointerLocked) {
                 inputState.mouseDX += e.movementX;
                 inputState.mouseDY += e.movementY;
@@ -762,33 +801,36 @@ window.WgpuSharp = {
                 }
             }
             const rect = canvas.getBoundingClientRect();
-            inputState.mouseX = e.clientX - rect.left;
-            inputState.mouseY = e.clientY - rect.top;
+            inputState.mouseX = (e.clientX - rect.left) * dpr;
+            inputState.mouseY = (e.clientY - rect.top) * dpr;
         };
         const onMouseDown = (e) => {
+            const dpr = window.devicePixelRatio || 1;
             inputState.mouseButtons |= (1 << e.button);
             if (!inputState.pointerLocked) {
                 const rect = canvas.getBoundingClientRect();
-                const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top, button: e.button };
-                inputState._mouseDownPos = pos;
-                inputState.mouseDownEvents.push(pos);
+                const cssX = e.clientX - rect.left, cssY = e.clientY - rect.top;
+                inputState._mouseDownPos = { x: cssX, y: cssY, button: e.button };
+                // Store buffer-pixel coordinates for C# raycasting
+                inputState.mouseDownEvents.push({ x: cssX * dpr, y: cssY * dpr, button: e.button });
             }
         };
         const onMouseUp = (e) => {
+            const dpr = window.devicePixelRatio || 1;
             inputState.mouseButtons &= ~(1 << e.button);
-            // Detect click (not drag) — mouseup within 5px of mousedown
+            // Detect click (not drag) — mouseup within 5px of mousedown (CSS pixels)
             if (inputState._mouseDownPos && inputState._mouseDownPos.button === e.button) {
                 const rect = canvas.getBoundingClientRect();
                 const ux = e.clientX - rect.left, uy = e.clientY - rect.top;
                 const dx = ux - inputState._mouseDownPos.x, dy = uy - inputState._mouseDownPos.y;
                 if (dx * dx + dy * dy < 25) {
-                    inputState.clickEvents.push({ x: ux, y: uy, button: e.button });
+                    inputState.clickEvents.push({ x: ux * dpr, y: uy * dpr, button: e.button });
                 } else if (e.button === 2) {
-                    // Right-drag box select
-                    const sx = inputState._mouseDownPos.x, sy = inputState._mouseDownPos.y;
+                    // Right-drag box select (buffer pixels)
+                    const sx = inputState._mouseDownPos.x * dpr, sy = inputState._mouseDownPos.y * dpr;
                     inputState.boxSelectEvents.push({
-                        x1: Math.min(sx, ux), y1: Math.min(sy, uy),
-                        x2: Math.max(sx, ux), y2: Math.max(sy, uy)
+                        x1: Math.min(sx, ux * dpr), y1: Math.min(sy, uy * dpr),
+                        x2: Math.max(sx, ux * dpr), y2: Math.max(sy, uy * dpr)
                     });
                 }
             }
@@ -816,12 +858,26 @@ window.WgpuSharp = {
     },
 
     getInputState() {
+        // Build active keys array without Object.keys().filter() overhead
+        const activeKeys = [];
+        for (const k in inputState.keys) {
+            if (inputState.keys[k]) activeKeys.push(k);
+        }
+        // Swap event arrays instead of slice+clear (avoids copying)
+        const kd = inputState.keyDownEvents;
+        const ce = inputState.clickEvents;
+        const md = inputState.mouseDownEvents;
+        const be = inputState.boxSelectEvents;
+        inputState.keyDownEvents = [];
+        inputState.clickEvents = [];
+        inputState.mouseDownEvents = [];
+        inputState.boxSelectEvents = [];
         const state = {
-            keys: Object.keys(inputState.keys).filter(k => inputState.keys[k]),
-            keyDownEvents: inputState.keyDownEvents.slice(),
-            clickEvents: inputState.clickEvents.slice(),
-            mouseDownEvents: inputState.mouseDownEvents.slice(),
-            boxSelectEvents: inputState.boxSelectEvents.slice(),
+            keys: activeKeys,
+            keyDownEvents: kd,
+            clickEvents: ce,
+            mouseDownEvents: md,
+            boxSelectEvents: be,
             ctrlKey: inputState.ctrlKey,
             shiftKey: inputState.shiftKey,
             mouseX: inputState.mouseX,
@@ -832,10 +888,6 @@ window.WgpuSharp = {
             wheelDelta: inputState.wheelDelta,
             pointerLocked: inputState.pointerLocked,
         };
-        inputState.keyDownEvents = [];
-        inputState.clickEvents = [];
-        inputState.mouseDownEvents = [];
-        inputState.boxSelectEvents = [];
         return state;
     },
 

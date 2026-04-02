@@ -12,6 +12,10 @@ internal sealed class CommandBatch
     private int _nextSlot;
     private int _writeKey;
 
+    // Cache last base64 per buffer ID to skip re-encoding unchanged data.
+    // Static so it persists across frames (CommandBatch is recreated each frame).
+    private static readonly Dictionary<int, string> _lastBase64 = new();
+
     /// <summary>Returns a negative placeholder ID referencing a result slot.</summary>
     private int AllocSlot()
     {
@@ -112,16 +116,55 @@ internal sealed class CommandBatch
     // Op 13: writeBuffer(deviceId, bufferId, data)
     public void WriteBuffer(int deviceId, int bufferId, byte[] data)
     {
-        var key = $"w{_writeKey++}";
-        _bufferWrites.Add(new BufferWrite { Key = key, Data = Convert.ToBase64String(data) });
+        var b64 = Convert.ToBase64String(data);
+        // Skip write if data is identical to last frame's write for this buffer
+        if (_lastBase64.TryGetValue(bufferId, out var last) && last == b64) return;
+        _lastBase64[bufferId] = b64;
+
+        var key = _writeKey++.ToString();
+        _bufferWrites.Add(new BufferWrite { Key = key, Data = b64 });
         _commands.Add([13, -1, deviceId, bufferId, key]);
     }
 
-    public void WriteBuffer(int deviceId, int bufferId, float[] data)
+    // Reusable byte buffer for float->byte conversion (avoids per-frame allocation)
+    private byte[] _floatConvertBuffer = [];
+
+    // Hash-based change detection for large buffers (avoids full string comparison)
+    private static readonly Dictionary<int, int> _lastHash = new();
+
+    public void WriteBuffer(int deviceId, int bufferId, float[] data, int floatCount)
     {
-        var bytes = new byte[data.Length * sizeof(float)];
-        Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length);
-        WriteBuffer(deviceId, bufferId, bytes);
+        int byteLen = floatCount * sizeof(float);
+        if (_floatConvertBuffer.Length < byteLen)
+            _floatConvertBuffer = new byte[byteLen];
+        Buffer.BlockCopy(data, 0, _floatConvertBuffer, 0, byteLen);
+
+        // Use fast hash for change detection instead of comparing full base64 strings
+        int hash = ComputeHash(_floatConvertBuffer, byteLen);
+        if (_lastHash.TryGetValue(bufferId, out var lastHash) && lastHash == hash) return;
+        _lastHash[bufferId] = hash;
+
+        var b64 = Convert.ToBase64String(_floatConvertBuffer, 0, byteLen);
+        var key = _writeKey++.ToString();
+        _bufferWrites.Add(new BufferWrite { Key = key, Data = b64 });
+        _commands.Add([13, -1, deviceId, bufferId, key]);
+    }
+
+    private static int ComputeHash(byte[] data, int length)
+    {
+        // FNV-1a hash — fast, good distribution
+        unchecked
+        {
+            int hash = -2128831035; // FNV offset basis
+            int step = Math.Max(1, length / 64); // sample ~64 bytes for very large buffers
+            for (int i = 0; i < length; i += step)
+            {
+                hash ^= data[i];
+                hash *= 16777619; // FNV prime
+            }
+            hash ^= length; // include length in hash
+            return hash;
+        }
     }
 
     // Op 14: beginComputePass(encoderId) -> passId
@@ -156,12 +199,21 @@ internal sealed class CommandBatch
         _commands.Add([18, -1, passIdOrRef, bufferIdOrRef, indirectOffset]);
     }
 
-    public object[] GetCommands() => _commands.ToArray();
-    public object[] GetBufferWrites() => _bufferWrites.Select(w => (object)w).ToArray();
+    public List<object[]> GetCommands() => _commands;
+    public List<BufferWrite> GetBufferWritesList() => _bufferWrites;
     public bool HasBufferWrites => _bufferWrites.Count > 0;
     public int CommandCount => _commands.Count;
 
-    private sealed class BufferWrite
+    /// <summary>Reset the batch for reuse (avoids allocating a new CommandBatch each frame).</summary>
+    public void Reset()
+    {
+        _commands.Clear();
+        _bufferWrites.Clear();
+        _nextSlot = 0;
+        _writeKey = 0;
+    }
+
+    internal sealed class BufferWrite
     {
         public required string Key { get; init; }
         public required string Data { get; init; }

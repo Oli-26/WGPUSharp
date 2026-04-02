@@ -1,0 +1,12 @@
+{
+  "appId": "com.wgpusharp.editor",
+  "appName": "WgpuSharp Editor",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  }
+}

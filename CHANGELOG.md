@@ -2,6 +2,40 @@
 
 All notable changes to WgpuSharp will be documented in this file.
 
+## [0.5.0-alpha] — 2026-04-02
+
+### Added — Skeletal Animation
+- **Rigged GLB import** — auto-detects glTF skins, joints, and animations in GLB files
+- **Skeleton system** — `Joint` hierarchy with topological sort, inverse bind matrices, rest-pose TRS
+- **Animation playback** — `AnimationPlayer` with CPU keyframe sampling (binary search + lerp/slerp), forward kinematics, zero-allocation per-frame joint matrix computation
+- **Animation clips** — multiple named clips per model with translation, rotation, scale channels; LINEAR and STEP interpolation
+- **Skinned rendering pipeline** — separate WGSL shader with `vs_skinned` vertex stage blending 4 joint influences per vertex via GPU storage buffer
+- **Animation inspector** — clip selector, play/pause/stop buttons, speed slider (0-3x), loop toggle, time scrubber, joint count display
+- **GLB parser extensions** — `LoadWithSkin()`, `ExtractSkeleton()`, `ExtractAnimations()`, readers for JOINTS_0, WEIGHTS_0, inverse bind matrices, animation timestamps/keyframes
+
+### Added — Editor UI Improvements
+- **Hierarchy search/filter** — text input at top of scene panel, case-insensitive node name matching
+- **Collapsible hierarchy** — click arrow to expand/collapse parent nodes
+- **Right-click context menu** — cut, copy, paste, duplicate, rename, delete on hierarchy nodes
+- **Double-click rename** — inline rename in the hierarchy panel
+- **Node type icons** — monospace icons in hierarchy (# Cube, @ Sphere, o Light, etc.)
+- **Lock indicator** — amber "L" badge on locked nodes in hierarchy
+- **Collapsible inspector sections** — Properties, Transform, Material, Light, Animation, Script sections with toggles
+- **Undo/redo history dropdown** — hover undo/redo buttons to see last 10 actions
+- **Local/World gizmo toggle** — toolbar button + L key shortcut
+- **Pause in play mode** — freeze gameplay while rendering continues
+- **Keyboard shortcut help dialog** — press ? for full shortcut reference overlay
+- **Import progress percentage** — numeric percentage shown on import progress bar
+- **Snap grid indicator** — viewport badge showing snap size when snap enabled
+- **Drag preview** — visual dimming of dragged hierarchy nodes
+- **Node count badge** — total node count shown in hierarchy header
+
+### Fixed
+- **Undo-delete sibling order** — `DeleteNodeAction.Undo()` now uses `InsertChild`/`Insert` to restore the node at its original position instead of appending
+- **Camera yaw sign mismatch** — `FreeLookCamera.InitFromOrbitCamera` yaw calculation now matches `FpsCamera` convention, preventing camera jumps when switching modes
+- **Light range not sent to GPU** — `WriteLightData` now writes `light.Range` to the shader's `PointLight.range` field; shader attenuation uses smooth range-based falloff
+- **Frustum culling with non-uniform scale** — replaced bounding sphere approximation with proper AABB-based frustum culling via `ComputeWorldAABB` + `ContainsAABB`
+
 ## [0.4.0-alpha] — 2026-03-27
 
 ### Added — Scene Editor & Game Engine

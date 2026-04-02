@@ -16,8 +16,8 @@ internal sealed class JsBridge
         => _js.InvokeAsync<bool>("WgpuSharp.isWebGpuSupported", ct);
 
     // Adapter
-    public ValueTask<int> RequestAdapterAsync(CancellationToken ct = default)
-        => _js.InvokeAsync<int>("WgpuSharp.requestAdapter", ct);
+    public ValueTask<int> RequestAdapterAsync(bool preferHighPerformance = false, CancellationToken ct = default)
+        => _js.InvokeAsync<int>("WgpuSharp.requestAdapter", ct, preferHighPerformance);
 
     public ValueTask<Core.GpuAdapterInfo> GetAdapterInfoAsync(int adapterId, CancellationToken ct = default)
         => _js.InvokeAsync<Core.GpuAdapterInfo>("WgpuSharp.getAdapterInfo", ct, adapterId);
@@ -53,6 +53,9 @@ internal sealed class JsBridge
 
     public ValueTask<int> GetCurrentTextureAsync(int contextId, CancellationToken ct = default)
         => _js.InvokeAsync<int>("WgpuSharp.getCurrentTexture", ct, contextId);
+
+    public ValueTask<CanvasSize> GetTextureSizeAsync(int textureId, CancellationToken ct = default)
+        => _js.InvokeAsync<CanvasSize>("WgpuSharp.getTextureSize", ct, textureId);
 
     public ValueTask<int> CreateTextureViewAsync(int textureId, CancellationToken ct = default)
         => _js.InvokeAsync<int>("WgpuSharp.createTextureView", ct, textureId);
@@ -164,7 +167,7 @@ internal sealed class JsBridge
         => _js.InvokeVoidAsync("WgpuSharp.stopLoop", ct);
 
     // Batched execution
-    public ValueTask<int[]> ExecuteBatchAsync(object[] commands, object[]? bufferWrites = null, CancellationToken ct = default)
+    public ValueTask<int[]> ExecuteBatchAsync(object commands, object? bufferWrites = null, CancellationToken ct = default)
         => _js.InvokeAsync<int[]>("WgpuSharp.executeBatch", ct, commands, bufferWrites);
 
     // Input

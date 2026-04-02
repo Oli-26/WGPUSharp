@@ -19,14 +19,39 @@ public static class SceneSerializer
     };
 
     /// <summary>Serialize a scene to JSON.</summary>
-    public static string Serialize(Scene scene)
+    public static string Serialize(Scene scene, SceneSettings? settings = null, GameSettingsData? gameSettings = null)
     {
         var data = new SceneData
         {
             Version = 1,
             Nodes = scene.Roots.Select(SerializeNode).ToArray(),
+            Settings = settings is not null ? SerializeSettings(settings) : null,
+            GameSettings = gameSettings,
         };
         return JsonSerializer.Serialize(data, JsonOpts);
+    }
+
+    private static SettingsData SerializeSettings(SceneSettings s) => new()
+    {
+        SkyZenith = Vec3(s.SkyZenith), SkyHorizon = Vec3(s.SkyHorizon), SkyGround = Vec3(s.SkyGround),
+        SunDirection = Vec3(s.SunDirection), SunColor = Vec3(s.SunColor), SunIntensity = s.SunIntensity,
+        AmbientColor = Vec3(s.AmbientColor),
+        FogColor = Vec3(s.FogColor), FogStart = s.FogStart, FogEnd = s.FogEnd,
+    };
+
+    public static void RestoreSettings(SceneData data, SceneSettings target)
+    {
+        if (data.Settings is not { } s) return;
+        if (s.SkyZenith is { Length: >= 3 }) target.SkyZenith = new(s.SkyZenith[0], s.SkyZenith[1], s.SkyZenith[2]);
+        if (s.SkyHorizon is { Length: >= 3 }) target.SkyHorizon = new(s.SkyHorizon[0], s.SkyHorizon[1], s.SkyHorizon[2]);
+        if (s.SkyGround is { Length: >= 3 }) target.SkyGround = new(s.SkyGround[0], s.SkyGround[1], s.SkyGround[2]);
+        if (s.SunDirection is { Length: >= 3 }) target.SunDirection = new(s.SunDirection[0], s.SunDirection[1], s.SunDirection[2]);
+        if (s.SunColor is { Length: >= 3 }) target.SunColor = new(s.SunColor[0], s.SunColor[1], s.SunColor[2]);
+        if (s.SunIntensity.HasValue) target.SunIntensity = s.SunIntensity.Value;
+        if (s.AmbientColor is { Length: >= 3 }) target.AmbientColor = new(s.AmbientColor[0], s.AmbientColor[1], s.AmbientColor[2]);
+        if (s.FogColor is { Length: >= 3 }) target.FogColor = new(s.FogColor[0], s.FogColor[1], s.FogColor[2]);
+        if (s.FogStart.HasValue) target.FogStart = s.FogStart.Value;
+        if (s.FogEnd.HasValue) target.FogEnd = s.FogEnd.Value;
     }
 
     /// <summary>
@@ -81,6 +106,14 @@ public static class SceneSerializer
                 Color = new[] { l.Color.X, l.Color.Y, l.Color.Z },
                 Intensity = l.Intensity,
                 Range = l.Range,
+            } : null,
+            HasSkeleton = node.AnimationPlayer is not null ? true : null,
+            AnimationState = node.AnimationPlayer is { } ap ? new AnimationStateData
+            {
+                ClipIndex = ap.CurrentClipIndex > 0 ? ap.CurrentClipIndex : null,
+                Playing = ap.IsPlaying ? true : null,
+                Loop = !ap.Loop ? false : null,
+                Speed = ap.Speed != 1f ? ap.Speed : null,
             } : null,
             Children = node.Children.Count > 0 ? node.Children.Select(SerializeNode).ToArray() : null,
         };
@@ -168,6 +201,36 @@ public sealed class SceneData
 {
     public int Version { get; set; } = 1;
     public NodeData[] Nodes { get; set; } = [];
+    public SettingsData? Settings { get; set; }
+    public GameSettingsData? GameSettings { get; set; }
+}
+
+/// <summary>Serialized gameplay settings (player speed, health, win condition, etc.).</summary>
+public sealed class GameSettingsData
+{
+    public float? PlayerSpeed { get; set; }
+    public float? JumpHeight { get; set; }
+    public float? Gravity { get; set; }
+    public int? MaxPlayerHealth { get; set; }
+    public bool? TimerEnabled { get; set; }
+    public float? TimerMax { get; set; }
+    public string? WinCondition { get; set; }
+    public string? StartMessage { get; set; }
+}
+
+/// <summary>Serialized scene environment settings.</summary>
+public sealed class SettingsData
+{
+    public float[]? SkyZenith { get; set; }
+    public float[]? SkyHorizon { get; set; }
+    public float[]? SkyGround { get; set; }
+    public float[]? SunDirection { get; set; }
+    public float[]? SunColor { get; set; }
+    public float? SunIntensity { get; set; }
+    public float[]? AmbientColor { get; set; }
+    public float[]? FogColor { get; set; }
+    public float? FogStart { get; set; }
+    public float? FogEnd { get; set; }
 }
 
 /// <summary>Serialized node data.</summary>
@@ -189,7 +252,18 @@ public sealed class NodeData
     public string? ImportedMeshData { get; set; }
     public string? ImportedMeshFileName { get; set; }
     public LightNodeData? Light { get; set; }
+    public bool? HasSkeleton { get; set; }
+    public AnimationStateData? AnimationState { get; set; }
     public NodeData[]? Children { get; set; }
+}
+
+/// <summary>Serialized animation playback state.</summary>
+public sealed class AnimationStateData
+{
+    public int? ClipIndex { get; set; }
+    public bool? Playing { get; set; }
+    public bool? Loop { get; set; }
+    public float? Speed { get; set; }
 }
 
 /// <summary>Serialized point light data.</summary>
