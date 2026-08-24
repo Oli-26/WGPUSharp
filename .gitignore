@@ -31,3 +31,4 @@ CLAUDE.md
 
 ## Editor Electron app (local dev tool)
 electron/
+workload-install.ps1

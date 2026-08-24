@@ -1,6 +1,6 @@
 {
-  "appId": "com.wgpusharp.editor",
-  "appName": "WgpuSharp Editor",
+  "appId": "com.wgpumaui.editor",
+  "appName": "WgpuMaui Editor",
   "webDir": "www",
   "server": {
     "androidScheme": "https"

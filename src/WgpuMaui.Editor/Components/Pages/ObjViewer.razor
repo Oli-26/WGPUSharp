@@ -1,0 +1,471 @@
+﻿@page "/objviewer"
+@using System.Numerics
+@using System.Globalization
+@using System.IO
+@using WgpuMaui.Core
+@using WgpuMaui.Commands
+@using WgpuMaui.Pipeline
+@using WgpuMaui.Resources
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<MudText Typo="Typo.h4" Class="mb-4">Visualizador de Arquivos OBJ (WebGPU)</MudText>
+
+<MudGrid Class="mb-4" AlignItems="Center">
+    <MudItem xs="12" sm="4">
+        <MudFileUpload T="IBrowserFile" FilesChanged="OnInputFileChanged" Accept=".obj">
+            <CustomContent>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.CloudUpload"
+                           OnClick="@context.OpenFilePickerAsync">
+                    Selecionar Arquivo .OBJ
+                </MudButton>
+            </CustomContent>
+            <SelectedTemplate></SelectedTemplate>
+        </MudFileUpload>
+    </MudItem>
+    
+    <MudItem xs="12" sm="4">
+        <MudSwitch @bind-Value="_autoRotate" 
+                   Color="Color.Success" 
+                   Label="@(_autoRotate ? "Rotação Automática" : "Controle Manual (Arraste o Mouse no Canvas)")" />
+    </MudItem>
+
+    <MudItem xs="12" sm="4" Class="d-flex align-center">
+        @if (!string.IsNullOrEmpty(_fileName))
+        {
+            <MudChip T="string" Color="Color.Info" Variant="Variant.Text">@_fileName (@_vertexCount vértices)</MudChip>
+        }
+    </MudItem>
+</MudGrid>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+
+@if (_isLoading)
+{
+    <div class="d-flex align-center gap-4 mb-4">
+        <MudProgressCircular Color="Color.Primary" Size="Size.Small" Indeterminate="true" />
+        <MudText Typo="Typo.body1">@_loadingStatus</MudText>
+    </div>
+}
+
+<div style="width: 100%; text-align: center;">
+    @* Canvas capturando os eventos de ponteiro (mouse/touch) para controle de rotação *@
+    <canvas id="gpu-canvas" 
+            width="800" 
+            height="600" 
+            @onpointerdown="OnPointerDown"
+            @onpointermove="OnPointerMove"
+            @onpointerup="OnPointerUp"
+            style="border: 1px solid #333; max-width: 100%; background-color: #0d0e12; border-radius: 4px; cursor: move; touch-action: none;">
+    </canvas>
+</div>
+
+@code {
+    private bool _isLoading;
+    private string? _error;
+    private string _loadingStatus = "";
+    private string _fileName = "";
+    private int _vertexCount = 0;
+    
+    private bool _autoRotate = true;
+    
+    // Variáveis para controle orbitais do Mouse
+    private bool _isDragging = false;
+    private double _lastMouseX;
+    private double _lastMouseY;
+    private float _rotationY = 0f;
+    private float _rotationX = -0.1f; // Inclinação inicial padrão do viewport
+
+    private GpuDevice? _device;
+    private GpuCanvas? _canvas;
+    private GpuRenderPipeline? _pipeline;
+    private GpuBindGroup? _bindGroup;
+    private GpuBuffer? _vertexBuffer;
+    private GpuBuffer? _indexBuffer;
+    private GpuBuffer? _uboBuffer;
+    private GpuTextureView? _depthView;
+    private GpuLoop? _loop;
+
+    private static float[] Vertices = Array.Empty<float>();
+    private static int[] Indices = Array.Empty<int>();
+
+    private const string Shader = @"
+struct Uniforms {
+    mvp: mat4x4f,
+    model: mat4x4f,
+    lightDir: vec3f,
+};
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VOut {
+    @builtin(position) pos: vec4f,
+    @location(0) normal: vec3f,
+};
+
+@vertex
+fn vs_main(
+    @location(0) pos: vec3f,
+    @location(1) normal: vec3f
+) -> VOut {
+    var o: VOut;
+    o.pos = uniforms.mvp * vec4f(pos, 1.0);
+    o.normal = normalize((uniforms.model * vec4f(normal, 0.0)).xyz);
+    return o;
+}
+
+@fragment
+fn fs_main(i: VOut) -> @location(0) vec4f {
+    let N = normalize(i.normal);
+    let L = normalize(-uniforms.lightDir);
+    let diff = max(dot(N, L), 0.0);
+    
+    let base = vec3f(0.85, 0.85, 0.88);
+    
+    let V = vec3f(0.0, 0.0, 1.0);
+    let H = normalize(L + V);
+    let spec = pow(max(dot(N, H), 0.0), 32.0);
+
+    let color = base * (0.25 + diff * 0.75) + vec3f(1.0, 1.0, 1.0) * spec * 0.4;
+    return vec4f(color, 1.0);
+}
+";
+
+    // Captura o clique inicial
+    private void OnPointerDown(PointerEventArgs e)
+    {
+        _isDragging = true;
+        _lastMouseX = e.ClientX;
+        _lastMouseY = e.ClientY;
+    }
+
+    // Calcula o deslocamento (Delta) do arraste e rotaciona os eixos X e Y
+    private void OnPointerMove(PointerEventArgs e)
+    {
+        if (!_isDragging) return;
+
+        double deltaX = e.ClientX - _lastMouseX;
+        double deltaY = e.ClientY - _lastMouseY;
+
+        _lastMouseX = e.ClientX;
+        _lastMouseY = e.ClientY;
+
+        // Sensibilidade do arraste (ajustável mudando o multiplicador)
+        float sensitivity = 0.007f;
+        
+        _rotationY += (float)deltaX * sensitivity;
+        _rotationX += (float)deltaY * sensitivity;
+
+        // Trava a rotação vertical (Pitch) para evitar que a câmera inverta de cabeça para baixo
+        _rotationX = Math.Clamp(_rotationX, -MathF.PI / 2.1f, MathF.PI / 2.1f);
+    }
+
+    // Libera a captura do mouse
+    private void OnPointerUp(PointerEventArgs e)
+    {
+        _isDragging = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            await Task.Delay(250);
+            var adapter = await Gpu.RequestAdapterAsync(JS);
+            if (adapter == null)
+            {
+                _error = "WebGPU indisponível nesta WebView ou navegador.";
+                StateHasChanged();
+                return;
+            }
+
+            _device = await adapter.RequestDeviceAsync();
+            _canvas = await GpuCanvas.ConfigureAsync(_device, "gpu-canvas");
+            
+            _uboBuffer = await _device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = 144, 
+                Usage = BufferUsage.Uniform | BufferUsage.CopyDest
+            });
+
+            var shader = await _device.CreateShaderModuleAsync(Shader);
+
+            _pipeline = await _device.CreateRenderPipelineAsync(new RenderPipelineDescriptor
+            {
+                Vertex = new VertexState
+                {
+                    Module = shader,
+                    EntryPoint = "vs_main",
+                    Buffers =
+                    [
+                        new VertexBufferLayout
+                        {
+                            ArrayStride = 6 * sizeof(float),
+                            Attributes =
+                            [
+                                new VertexAttribute { ShaderLocation = 0, Offset = 0, Format = VertexFormat.Float32x3 },
+                                new VertexAttribute { ShaderLocation = 1, Offset = 3 * sizeof(float), Format = VertexFormat.Float32x3 }
+                            ]
+                        }
+                    ]
+                },
+                Fragment = new FragmentState
+                {
+                    Module = shader,
+                    EntryPoint = "fs_main",
+                    Targets = [new ColorTargetState { Format = _canvas.Format }]
+                },
+                PrimitiveTopology = PrimitiveTopology.TriangleList,
+                CullMode = CullMode.None,
+                DepthStencil = new DepthStencilState
+                {
+                    Format = TextureFormat.Depth24Plus,
+                    DepthWriteEnabled = true,
+                    DepthCompare = CompareFunction.Less
+                }
+            });
+
+            _bindGroup = await _device.CreateBindGroupAsync(_pipeline, 0, [
+                new BindGroupEntry { Binding = 0, Buffer = _uboBuffer }
+            ]);
+
+            var depth = await _canvas.CreateDepthTextureAsync(_device);
+            _depthView = await depth.CreateViewAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnInputFileChanged(IBrowserFile file)
+    {
+        if (file == null || _device == null || _canvas == null || _pipeline == null || _bindGroup == null || _depthView == null) return;
+
+        try
+        {
+            _isLoading = true;
+            _error = null;
+            _fileName = file.Name;
+            _loadingStatus = "Lendo arquivo do disco...";
+            _rotationY = 0f; 
+            _rotationX = -0.1f;
+            StateHasChanged();
+
+            if (_loop != null)
+            {
+                await _loop.DisposeAsync();
+                _loop = null;
+            }
+
+            using var stream = file.OpenReadStream(maxAllowedSize: 1024 * 1024 * 100);
+            using var reader = new StreamReader(stream);
+            string objContent = await reader.ReadToEndAsync();
+
+            _loadingStatus = "Processando malha e gerando normais...";
+            StateHasChanged();
+
+            ParseObjDynamic(objContent);
+            _vertexCount = Vertices.Length / 6;
+
+            if (Vertices.Length == 0 || Indices.Length == 0)
+            {
+                throw new Exception("O arquivo selecionado não contém dados válidos de geometria tridimensional (v/f).");
+            }
+
+            var vbufSize = Vertices.Length * sizeof(float);
+            if (vbufSize % 4 != 0) vbufSize += 4 - (vbufSize % 4);
+
+            _vertexBuffer = await _device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = vbufSize,
+                Usage = BufferUsage.Vertex | BufferUsage.CopyDest
+            });
+            await _vertexBuffer.WriteAsync(Vertices);
+
+            var rawIdxBytes = Indices.Length * sizeof(int);
+            var alignedIdxSize = rawIdxBytes;
+            if (alignedIdxSize % 4 != 0) alignedIdxSize += 4 - (alignedIdxSize % 4);
+
+            var idxBytes = new byte[alignedIdxSize];
+            Buffer.BlockCopy(Indices, 0, idxBytes, 0, rawIdxBytes);
+
+            _indexBuffer = await _device.CreateBufferAsync(new BufferDescriptor
+            {
+                Size = idxBytes.Length,
+                Usage = BufferUsage.Index | BufferUsage.CopyDest
+            });
+            await _indexBuffer.WriteAsync(idxBytes);
+
+            _loop = await Gpu.RunLoopAsync(_device, async frame =>
+            {
+                // Se a rotação automática estiver ativa, atualiza apenas o eixo Y continuamente
+                if (_autoRotate)
+                {
+                    _rotationY += frame.DeltaTime * 0.6f;
+                }
+
+                // Cria matrizes combinando a Rotação X (cima/baixo) e Rotação Y (lados)
+                var model = Matrix4x4.CreateRotationY(_rotationY) * Matrix4x4.CreateRotationX(_rotationX);
+                var view = Matrix4x4.CreateLookAt(new Vector3(0.0f, 0.0f, 2.2f), Vector3.Zero, Vector3.UnitY);
+                var proj = CreatePerspective(MathF.PI / 4, 800f / 600f, 0.1f, 100f);
+                var mvp = model * view * proj;
+
+                var light = Vector3.Normalize(new Vector3(0.5f, 1.0f, 0.6f));
+
+                byte[] uboBytes = new byte[144];
+                WriteMatrix(mvp, uboBytes, 0);
+                WriteMatrix(model, uboBytes, 64);
+                WriteVec4(light, 1f, uboBytes, 128);
+
+                var batch = new RenderBatch(_device);
+                batch.WriteBuffer(_uboBuffer, uboBytes);
+                
+                var viewTex = batch.GetCurrentTextureView(_canvas);
+
+                var pass = batch.BeginRenderPass(viewTex, new GpuColor(0.05, 0.06, 0.09, 1.0), _depthView);
+                pass.SetPipeline(_pipeline);
+                pass.SetBindGroup(0, _bindGroup); 
+                pass.SetVertexBuffer(0, _vertexBuffer);
+                pass.SetIndexBuffer(_indexBuffer, IndexFormat.Uint32);
+                pass.DrawIndexed(Indices.Length);
+                pass.EndAndSubmit();
+
+                await batch.FlushAsync();
+            });
+
+            _isLoading = false;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Erro ao carregar modelo: {ex.Message}";
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private static void ParseObjDynamic(string objText)
+    {
+        var rawPositions = new List<Vector3>();
+        var faceIndices = new List<int>();
+
+        using var reader = new StringReader(objText);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            line = line.Trim();
+            if (string.IsNullOrEmpty(line) || line.StartsWith("#")) continue;
+
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts[0] == "v" && parts.Length >= 4)
+            {
+                float x = float.Parse(parts[1], CultureInfo.InvariantCulture);
+                float y = float.Parse(parts[2], CultureInfo.InvariantCulture);
+                float z = float.Parse(parts[3], CultureInfo.InvariantCulture);
+                rawPositions.Add(new Vector3(x, y, z));
+            }
+            else if (parts[0] == "f" && parts.Length >= 4)
+            {
+                int i0 = int.Parse(parts[1].Split('/')[0]) - 1;
+                int i1 = int.Parse(parts[2].Split('/')[0]) - 1;
+                int i2 = int.Parse(parts[3].Split('/')[0]) - 1;
+                
+                faceIndices.Add(i0);
+                faceIndices.Add(i1);
+                faceIndices.Add(i2);
+            }
+        }
+
+        if (rawPositions.Count == 0) return;
+
+        Vector3 min = rawPositions[0];
+        Vector3 max = rawPositions[0];
+        foreach (var p in rawPositions)
+        {
+            min = Vector3.Min(min, p);
+            max = Vector3.Max(max, p);
+        }
+
+        Vector3 center = (min + max) * 0.5f;
+        Vector3 size = max - min;
+        float maxDim = MathF.Max(size.X, MathF.Max(size.Y, size.Z));
+        float scale = maxDim > 0 ? 1.5f / maxDim : 1.0f; 
+
+        var normals = new Vector3[rawPositions.Count];
+        for (int i = 0; i < faceIndices.Count; i += 3)
+        {
+            if (i + 2 >= faceIndices.Count) break;
+            int idx0 = faceIndices[i];
+            int idx1 = faceIndices[i + 1];
+            int idx2 = faceIndices[i + 2];
+
+            Vector3 v0 = rawPositions[idx0];
+            Vector3 v1 = rawPositions[idx1];
+            Vector3 v2 = rawPositions[idx2];
+
+            Vector3 normal = Vector3.Normalize(Vector3.Cross(v1 - v0, v2 - v0));
+            normals[idx0] += normal;
+            normals[idx1] += normal;
+            normals[idx2] += normal;
+        }
+
+        var vertexData = new List<float>(rawPositions.Count * 6);
+        for (int i = 0; i < rawPositions.Count; i++)
+        {
+            var normPos = (rawPositions[i] - center) * scale;
+            var norm = Vector3.Normalize(normals[i]);
+
+            vertexData.Add(normPos.X);
+            vertexData.Add(normPos.Y);
+            vertexData.Add(normPos.Z);
+            vertexData.Add(norm.X);
+            vertexData.Add(norm.Y);
+            vertexData.Add(norm.Z);
+        }
+
+        Vertices = vertexData.ToArray();
+        Indices = faceIndices.ToArray();
+    }
+
+    private static void WriteMatrix(Matrix4x4 m, byte[] d, int o)
+    {
+        float[] v = [
+            m.M11, m.M12, m.M13, m.M14,
+            m.M21, m.M22, m.M23, m.M24,
+            m.M31, m.M32, m.M33, m.M34,
+            m.M41, m.M42, m.M43, m.M44
+        ];
+        Buffer.BlockCopy(v, 0, d, o, 64);
+    }
+
+    private static void WriteVec4(Vector3 v, float w, byte[] d, int o)
+    {
+        float[] f = [v.X, v.Y, v.Z, w];
+        Buffer.BlockCopy(f, 0, d, o, 16);
+    }
+
+    private static Matrix4x4 CreatePerspective(float fov, float a, float n, float f)
+    {
+        float t = 1 / MathF.Tan(fov / 2);
+        float r = 1 / (n - f);
+        return new Matrix4x4(
+            t / a, 0, 0, 0,
+            0, t, 0, 0,
+            0, 0, f * r, -1,
+            0, 0, n * f * r, 0
+        );
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_loop != null) await _loop.DisposeAsync();
+    }
+}

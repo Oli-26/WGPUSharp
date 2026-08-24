@@ -1,7 +1,7 @@
 {
-  "name": "wgpusharp-editor-android",
+  "name": "wgpumaui-editor-android",
   "version": "0.4.0",
-  "description": "WgpuSharp Scene Editor — Android APK via Capacitor",
+  "description": "WgpuMaui Scene Editor — Android APK via Capacitor",
   "private": true,
   "scripts": {
     "sync": "cap sync android",

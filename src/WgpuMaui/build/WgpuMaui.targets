@@ -1,0 +1,14 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    Auto-import WgpuMaui namespaces for consumers.
+    Consumers get these usings automatically when referencing the NuGet package,
+    so they don't need to add @using directives to every Razor component.
+  -->
+  <ItemGroup>
+    <Using Include="WgpuMaui.Core" />
+    <Using Include="WgpuMaui.Commands" />
+    <Using Include="WgpuMaui.Resources" />
+    <Using Include="WgpuMaui.Pipeline" />
+    <Using Include="WgpuMaui.Mesh" />
+  </ItemGroup>
+</Project>

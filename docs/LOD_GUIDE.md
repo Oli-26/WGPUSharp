@@ -1,6 +1,6 @@
-# LOD (Level of Detail) in WgpuSharp
+# LOD (Level of Detail) in WgpuMaui
 
-WgpuSharp supports automatic level-of-detail for meshes. Objects far from the camera render with fewer triangles, saving GPU time without visible quality loss.
+WgpuMaui supports automatic level-of-detail for meshes. Objects far from the camera render with fewer triangles, saving GPU time without visible quality loss.
 
 ## How It Works
 

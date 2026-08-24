@@ -1,4 +1,4 @@
-# WgpuSharp
+# WgpuMaui
 
 A C# game engine and scene editor for the browser, built on **WebGPU** and **Blazor WebAssembly**.
 
@@ -6,7 +6,7 @@ A C# game engine and scene editor for the browser, built on **WebGPU** and **Bla
 
 ## What it does
 
-WgpuSharp gives you two things:
+WgpuMaui gives you two things:
 
 1. **A typed GPU binding layer** — async C# that mirrors the WebGPU spec. No raw JavaScript.
 2. **A scene editor and game engine** — build 3D levels, add gameplay, and playtest in the browser.
@@ -54,9 +54,9 @@ var pipeline = await device.CreateRenderPipelineAsync(descriptor);
 ## Running the demos
 
 ```bash
-git clone https://github.com/Oli-26/WGPUSharp.git
-cd WGPUSharp
-dotnet run --project src/WgpuSharp.Demo
+git clone https://github.com/Oli-26/WgpuMaui.git
+cd WgpuMaui
+dotnet run --project src/WgpuMaui.Demo
 ```
 
 Then open **http://localhost:5212** in Chrome or Edge.
@@ -79,20 +79,20 @@ Then open **http://localhost:5212** in Chrome or Edge.
 
 1. Add the NuGet package to your Blazor WASM project:
    ```
-   dotnet add package WgpuSharp
+   dotnet add package WgpuMaui
    ```
 
 2. Add the JS bridge to your `index.html` (before the Blazor script):
    ```html
-   <script src="_content/WgpuSharp/WgpuSharp.js"></script>
+   <script src="_content/WgpuMaui/WgpuMaui.js"></script>
    ```
 
 3. Render from a Razor component:
    ```razor
-   @using WgpuSharp.Core
-   @using WgpuSharp.Commands
-   @using WgpuSharp.Pipeline
-   @using WgpuSharp.Resources
+   @using WgpuMaui.Core
+   @using WgpuMaui.Commands
+   @using WgpuMaui.Pipeline
+   @using WgpuMaui.Resources
    @inject IJSRuntime JS
 
    <canvas id="gpu-canvas" width="800" height="600"></canvas>
@@ -153,7 +153,7 @@ var node = new SceneNode("Model") {
 ## Scene graph and gameplay
 
 ```csharp
-using WgpuSharp.Scene;
+using WgpuMaui.Scene;
 
 var scene = new Scene();
 
@@ -202,9 +202,9 @@ All JS interop is centralised in a single bridge file. C# holds integer handles 
 ## Project structure
 
 ```
-WgpuSharp/
+WgpuMaui/
 ├── src/
-│   ├── WgpuSharp/              # The library (NuGet package)
+│   ├── WgpuMaui/              # The library (NuGet package)
 │   │   ├── Core/               # Gpu, GpuAdapter, GpuDevice, GpuCanvas, GpuLoop, Input, Enums
 │   │   ├── Commands/           # RenderBatch, CommandEncoder, RenderPassEncoder
 │   │   ├── Resources/          # GpuBuffer, GpuTexture, GpuSampler, GpuBindGroup
@@ -213,11 +213,11 @@ WgpuSharp/
 │   │   ├── Scene/              # SceneGraph, SceneNode, Transform, SceneRenderer, cameras,
 │   │   │                       # gizmos, picking, sky, grid, ground, lights, undo, scripting
 │   │   ├── Interop/            # JsBridge, CommandBatch (internal)
-│   │   └── wwwroot/            # WgpuSharp.js (static web asset)
-│   └── WgpuSharp.Demo/         # Blazor WASM demo app
+│   │   └── wwwroot/            # WgpuMaui.js (static web asset)
+│   └── WgpuMaui.Demo/         # Blazor WASM demo app
 │       └── Pages/              # Editor, Triangle, Cube, FlyCamera, ShaderPlayground, etc.
 ├── tests/
-│   └── WgpuSharp.Tests/        # 116 unit tests
+│   └── WgpuMaui.Tests/        # 116 unit tests
 └── docs/
     ├── EDITOR_GUIDE.md          # Scene editor reference
     └── LOD_GUIDE.md             # Level of detail guide
@@ -227,13 +227,13 @@ WgpuSharp/
 
 1. Start the demo app:
    ```bash
-   dotnet run --project src/WgpuSharp.Demo
+   dotnet run --project src/WgpuMaui.Demo
    ```
 2. Open **http://localhost:5212/editor** in Chrome or Edge.
 3. Add objects (cubes, spheres, lights, imported models), set tags and scripts in the inspector.
 4. Hit **Play** to playtest, **Escape** to return to the editor.
 5. Click **Save** in the scene panel to download your scene as `scene.json`.
-6. Copy the saved file into `src/WgpuSharp.Demo/wwwroot/scenes/`.
+6. Copy the saved file into `src/WgpuMaui.Demo/wwwroot/scenes/`.
 7. Load it directly by opening **http://localhost:5212/editor?scene=scene.json**.
 
 Scenes placed in `wwwroot/scenes/` are bundled into all builds automatically. The `?scene=` parameter loads a scene on startup instead of the default template.
@@ -275,7 +275,7 @@ Add `--aot` for ahead-of-time compilation (slower build, faster runtime). Previe
 ```bash
 dotnet build           # Build everything
 dotnet test            # Run all 116 tests
-dotnet pack src/WgpuSharp/WgpuSharp.csproj -c Release  # Create NuGet package
+dotnet pack src/WgpuMaui/WgpuMaui.csproj -c Release  # Create NuGet package
 ```
 
 ## Browser support

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WgpuMaui.Demo</title>
+    <base href="/" />
+    <link rel="stylesheet" href="css/bootstrap/bootstrap.min.css" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link href="WgpuMaui.Demo.styles.css" rel="stylesheet" />
+</head>
+
+<body>
+    <div id="app">
+        <svg class="loading-progress">
+            <circle r="40%" cx="50%" cy="50%" />
+            <circle r="40%" cx="50%" cy="50%" />
+        </svg>
+        <div class="loading-progress-text"></div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">🗙</a>
+    </div>
+    <script src="_content/WgpuMaui/WgpuMaui.js"></script>
+    <script src="shader-playground.js"></script>
+    <script>
+        window.WgpuMauiEditor = {
+            focusElement(id) {
+                const el = document.getElementById(id);
+                if (el) { el.focus(); el.select(); }
+            },
+            _sceneFileHandle: null,
+            async saveToHandle(content) {
+                if (!this._sceneFileHandle) return false;
+                try {
+                    const writable = await this._sceneFileHandle.createWritable();
+                    await writable.write(content);
+                    await writable.close();
+                    return true;
+                } catch { return false; }
+            },
+            async saveWithPicker(suggestedName, content) {
+                if (!window.showSaveFilePicker) {
+                    // Fallback for browsers without File System Access API
+                    const blob = new Blob([content], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = suggestedName;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    return suggestedName;
+                }
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName,
+                        types: [{ description: 'Scene files', accept: { 'application/json': ['.json'] } }],
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(content);
+                    await writable.close();
+                    this._sceneFileHandle = handle;
+                    return handle.name;
+                } catch { return null; } // user cancelled
+            },
+            downloadFile(filename, content) {
+                const blob = new Blob([content], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(a.href);
+            },
+            pickAndReadFile(accept) {
+                return new Promise((resolve) => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = accept;
+                    input.onchange = async () => {
+                        if (input.files.length === 0) { resolve(null); return; }
+                        resolve(await input.files[0].text());
+                    };
+                    input.click();
+                });
+            },
+            async pickAndReadFileWithHandle(accept) {
+                if (!window.showOpenFilePicker) return null;
+                try {
+                    const [handle] = await window.showOpenFilePicker({
+                        types: [{ description: 'Scene files', accept: { 'application/json': ['.json'] } }],
+                    });
+                    this._sceneFileHandle = handle;
+                    const file = await handle.getFile();
+                    return await file.text();
+                } catch { return null; }
+            },
+            captureScreenshot(canvasId) {
+                const canvas = document.getElementById(canvasId);
+                if (!canvas) return;
+                canvas.toBlob((blob) => {
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'screenshot.png';
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                }, 'image/png');
+            },
+            _audioCtx: null,
+            _audioSources: {},
+
+            initAudio() {
+                if (!this._audioCtx) this._audioCtx = new AudioContext();
+            },
+
+            updateAudioSources(listenerX, listenerY, listenerZ, sources) {
+                if (!this._audioCtx) return;
+                const ctx = this._audioCtx;
+
+                // Create/update sources
+                const activeIds = new Set();
+                for (const s of sources) {
+                    activeIds.add(s.id);
+                    if (!this._audioSources[s.id]) {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.type = 'sine';
+                        osc.frequency.value = 220 + (s.id % 8) * 55; // different pitch per source
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.start();
+                        this._audioSources[s.id] = { osc, gain };
+                    }
+                    // Distance attenuation
+                    const dx = s.x - listenerX, dy = s.y - listenerY, dz = s.z - listenerZ;
+                    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                    const vol = Math.max(0, 1.0 - dist / 15.0);
+                    this._audioSources[s.id].gain.gain.value = vol * 0.15;
+                }
+                // Remove sources no longer active
+                for (const id in this._audioSources) {
+                    if (!activeIds.has(parseInt(id))) {
+                        this._audioSources[id].osc.stop();
+                        delete this._audioSources[id];
+                    }
+                }
+            },
+
+            stopAllAudio() {
+                for (const id in this._audioSources) {
+                    this._audioSources[id].osc.stop();
+                }
+                this._audioSources = {};
+            },
+
+            drawMinimap(playerX, playerZ, dots) {
+                const canvas = document.getElementById('minimap-canvas');
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                const w = canvas.width, h = canvas.height;
+                const scale = 3;
+                ctx.clearRect(0, 0, w, h);
+                for (const dot of dots) {
+                    const sx = w/2 + (dot.x - playerX) * scale;
+                    const sy = h/2 + (dot.z - playerZ) * scale;
+                    if (sx < -5 || sx > w+5 || sy < -5 || sy > h+5) continue;
+                    ctx.fillStyle = dot.color;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, dot.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            },
+
+            // --- Build integration (Electron only) ---
+            get canBuild() { return !!window.electronAPI; },
+            _buildOutputCallback: null,
+
+            initBuildListener(dotNetRef) {
+                if (!window.electronAPI) return;
+                this._buildOutputCallback = dotNetRef;
+                window.electronAPI.onBuildOutput((data) => {
+                    if (this._buildOutputCallback) {
+                        var text = typeof data === 'string' ? data : (data.text || String(data));
+                        this._buildOutputCallback.invokeMethodAsync('OnBuildOutput', 'stdout', text);
+                    }
+                });
+            },
+
+            async writePackageMetadata(meta) {
+                if (!window.electronAPI) return;
+                await window.electronAPI.writePackageMetadata(meta);
+            },
+
+            async saveSceneForBuild(sceneJson) {
+                if (!window.electronAPI) return;
+                await window.electronAPI.saveSceneForBuild(sceneJson);
+            },
+
+            async runGameBuild(target, aot) {
+                if (!window.electronAPI) return;
+                return await window.electronAPI.runGameBuild(target, aot);
+            },
+
+            async runBuild(target, aot) {
+                if (!window.electronAPI) return { success: false, code: -1 };
+                return await window.electronAPI.runBuild(target, aot);
+            },
+
+            async cancelBuild() {
+                if (!window.electronAPI) return false;
+                return await window.electronAPI.cancelBuild();
+            },
+
+            pickAndReadFileBase64(accept) {
+                return new Promise((resolve) => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = accept;
+                    input.onchange = async () => {
+                        if (input.files.length === 0) { resolve(null); return; }
+                        const file = input.files[0];
+                        // Use Web Worker for off-thread file reading + base64 encoding
+                        const worker = new Worker('import-worker.js');
+                        worker.onmessage = (e) => {
+                            if (e.data.type === 'progress') {
+                                // Update progress bar if available
+                                const bar = document.getElementById('import-progress-bar');
+                                const label = document.getElementById('import-progress-label');
+                                if (bar) bar.style.width = e.data.pct + '%';
+                                if (label) label.textContent = e.data.phase;
+                            } else if (e.data.type === 'done') {
+                                worker.terminate();
+                                resolve(e.data.fileName + '|' + e.data.base64);
+                            }
+                        };
+                        worker.onerror = () => { worker.terminate(); resolve(null); };
+                        worker.postMessage(file);
+                    };
+                    input.click();
+                });
+            }
+        };
+    </script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+
+</html>

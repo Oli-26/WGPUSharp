@@ -1,4 +1,4 @@
-# WgpuSharp Scene Editor Guide
+# WgpuMaui Scene Editor Guide
 
 A lightweight 3D game engine and scene editor built with WebGPU and Blazor WASM. Build levels, add gameplay logic, and playtest — all in the browser.
 

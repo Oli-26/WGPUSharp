@@ -1,0 +1,94 @@
+﻿@using WgpuMaui.Editor.Components.PageModels
+@inherits LayoutComponentBase
+@inject NavigationManager Navigation
+@inject ILocalizer Localizer 
+@inject MainLayoutModel ViewModel 
+<MudThemeProvider @ref="@ViewModel.MudThemeProvider" @bind-IsDarkMode="@ViewModel.IsDarkMode" Theme="@ViewModel.Theme" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Class="glass-royal-bg" Elevation="1">
+        <!--<MudIconButton Icon="@(@ViewModel.DrawerOpen ? Icons.Material.Filled.MenuOpen : Icons.Material.Filled.Menu)" Color=Color.Primary Edge="Edge.Start" OnClick="@(() => ViewModel.DrawerToggle())" />
+        -->
+        <MudMenu Icon="@Icons.Material.Filled.Engineering" Color="Color.Primary" IconColor="Color.Surface">
+            <MudMenuItem OnClick="() => OnNavigateTo(string.Empty)" Match="NavLinkMatch.All">Home</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+            <MudMenuItem OnClick="@(() => OnNavigateTo("objviewer"))">Obj Viewer</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+            <MudMenuItem OnClick="@(() => OnNavigateTo("triangle"))">Triangle</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+            <MudMenuItem OnClick="@(() => OnNavigateTo("cube"))">Cube</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+            <MudMenuItem OnClick="@(() => OnNavigateTo("reaction-diffusion"))">Reaction-Diffusion</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+            <MudMenuItem OnClick="@(() => OnNavigateTo("mesh-viewer"))">Mesh Viewer</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+            <MudMenuItem OnClick="@(() => OnNavigateTo("fly"))">Fly Camera</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+            <MudMenuItem OnClick="@(() => OnNavigateTo("msaa"))">MSAA</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+            <MudMenuItem OnClick="@(() => OnNavigateTo("shader-playground"))">Shader Playground</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+            <MudMenuItem OnClick="@(() => OnNavigateTo("editor"))">Scene Editor</MudMenuItem>
+            <MudDivider DividerType="DividerType.Middle" />
+        </MudMenu>
+        <MudText Typo="Typo.h6" Class="ml-2" HtmlTag="b" Color="@(@ViewModel.IsDarkMode ? Color.Primary : Color.Tertiary)">@Localizer["ApplicationTitle"]</MudText>
+        <MudSpacer />
+        <MudIconButton Icon="@(@ViewModel.IsDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
+                       Color=Color.Primary
+                       OnClick="OnToggleDarkModeAsync" />
+
+        <MudMenu Icon="@Icons.Material.Filled.Texture" Color=Color.Primary Dense="true">
+            <MudMenuItem OnClick='() => OnThemeMenuItemClick("royal")'>Royal Blue</MudMenuItem>
+            <MudMenuItem OnClick='() => OnThemeMenuItemClick("sky")'>Sky Blue</MudMenuItem>
+        </MudMenu>
+
+        <MudMenu Icon="@Icons.Material.Filled.Language" Color=Color.Primary Dense="true">
+            <MudMenuItem OnClick='() => OnLanguageMenuItemClickAsync("pt-BR")'>Português (BR)</MudMenuItem>
+            <MudMenuItem OnClick='() => OnLanguageMenuItemClickAsync("en-US")'>English   (US)</MudMenuItem>
+        </MudMenu>
+
+        <MudIconButton Icon="@Icons.Material.Filled.MoreVert" Color=Color.Primary Edge="Edge.End" />
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="@ViewModel.DrawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2">
+        
+    </MudDrawer>
+    <MudMainContent>
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+@code {
+
+    private async Task OnLanguageMenuItemClickAsync(string language) 
+    {
+        await ViewModel.LanguageMenuItemClickedAsync(language);
+        Navigation.Refresh(true);
+        StateHasChanged();
+    }  
+
+    private async Task OnToggleDarkModeAsync() 
+    {
+        await ViewModel.ToggleDarkModeAsync();
+        StateHasChanged();
+    }
+
+    private void OnNavigateTo(string uri)
+    {
+        Navigation.NavigateTo(uri);
+    }
+
+    private void OnSettingsChanged()
+    {
+        StateHasChanged();
+    }
+
+    private async Task OnThemeMenuItemClick(string theme)
+    {
+        await ViewModel.ThemeMenuItemClickedAsync(theme);
+        StateHasChanged();
+    }
+}

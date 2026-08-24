@@ -1,4 +1,17 @@
+All notable changes to WgpuMaui will be documented in this file.
 # Changelog
+
+## [0.1.0] WgpuSharp => WgpuMaui
+
+- Main port of library to MAUI.
+- Initial editor work.
+
+=========================
+
+> All Changes later from here > are made by this new fork
+> that aims to support MAUI. 
+
+=========================
 
 All notable changes to WgpuSharp will be documented in this file.
 

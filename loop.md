@@ -13,9 +13,9 @@
 - Added a cylinder to default scene for variety
 
 **Files changed:**
-- `src/WgpuSharp/Scene/EditorGrid.cs` (new)
-- `src/WgpuSharp/Scene/SceneRenderer.cs` (added Grid property, multi-draw encoder)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (updated default scene)
+- `src/WgpuMaui/Scene/EditorGrid.cs` (new)
+- `src/WgpuMaui/Scene/SceneRenderer.cs` (added Grid property, multi-draw encoder)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (updated default scene)
 
 **Also fixed this session:**
 - Pointer lock SecurityError (try-catch in JS bridge)
@@ -33,13 +33,13 @@
 - `Rebuild()` method with mesh resolver function — decouples serialization from GPU resources
 - Save button: serializes scene → triggers browser file download as `scene.json`
 - Load button: opens file picker → reads JSON → rebuilds entire scene graph
-- JS helpers (`WgpuSharpEditor.downloadFile`, `pickAndReadFile`) in index.html
+- JS helpers (`WgpuMauiEditor.downloadFile`, `pickAndReadFile`) in index.html
 
 **Files changed:**
-- `src/WgpuSharp/Scene/SceneSerializer.cs` (new)
-- `src/WgpuSharp/Scene/SceneNode.cs` (added MeshType property)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (Save/Load buttons, ResolveMesh, MeshType tags)
-- `src/WgpuSharp.Demo/wwwroot/index.html` (JS file download/upload helpers)
+- `src/WgpuMaui/Scene/SceneSerializer.cs` (new)
+- `src/WgpuMaui/Scene/SceneNode.cs` (added MeshType property)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (Save/Load buttons, ResolveMesh, MeshType tags)
+- `src/WgpuMaui.Demo/wwwroot/index.html` (JS file download/upload helpers)
 
 ## Loop 3 — Keyboard Shortcuts
 
@@ -66,10 +66,10 @@
 - Toolbar shows shortcut hints
 
 **Files changed:**
-- `src/WgpuSharp/wwwroot/WgpuSharp.js` (keyDownEvents, modifier tracking, preventDefault)
-- `src/WgpuSharp/Core/Input.cs` (KeyDownEvents, CtrlKey, ShiftKey, WasKeyPressed)
-- `src/WgpuSharp/Scene/OrbitCamera.cs` (FocusOn method, removed hardcoded F key)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (ProcessShortcuts, NudgeSelected, toolbar text)
+- `src/WgpuMaui/wwwroot/WgpuMaui.js` (keyDownEvents, modifier tracking, preventDefault)
+- `src/WgpuMaui/Core/Input.cs` (KeyDownEvents, CtrlKey, ShiftKey, WasKeyPressed)
+- `src/WgpuMaui/Scene/OrbitCamera.cs` (FocusOn method, removed hardcoded F key)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (ProcessShortcuts, NudgeSelected, toolbar text)
 
 ## Loop 4 — Viewport Object Picking (Raycasting)
 
@@ -114,17 +114,17 @@
 - Gizmo interaction takes priority over camera orbit and object picking
 
 **Files changed:**
-- `src/WgpuSharp/Scene/TranslateGizmo.cs` (new — rendering, hit testing, drag logic)
-- `src/WgpuSharp/Scene/SceneRenderer.cs` (Gizmo property, renders gizmo in pass)
-- `src/WgpuSharp/wwwroot/WgpuSharp.js` (mouseDownEvents, pointerLockBlocked, setPointerLockBlocked)
-- `src/WgpuSharp/Core/Input.cs` (MouseDownEvents on InputState)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (ProcessGizmo, gizmo drag flow)
+- `src/WgpuMaui/Scene/TranslateGizmo.cs` (new — rendering, hit testing, drag logic)
+- `src/WgpuMaui/Scene/SceneRenderer.cs` (Gizmo property, renders gizmo in pass)
+- `src/WgpuMaui/wwwroot/WgpuMaui.js` (mouseDownEvents, pointerLockBlocked, setPointerLockBlocked)
+- `src/WgpuMaui/Core/Input.cs` (MouseDownEvents on InputState)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (ProcessGizmo, gizmo drag flow)
 
 **Files changed:**
-- `src/WgpuSharp/Scene/Picking.cs` (new — Ray, AABB, raycasting)
-- `src/WgpuSharp/wwwroot/WgpuSharp.js` (clickEvents, drag-to-lock pointer, release on mouseup)
-- `src/WgpuSharp/Core/Input.cs` (ClickEvent type, ClickEvents on InputState)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (ProcessPicking integration)
+- `src/WgpuMaui/Scene/Picking.cs` (new — Ray, AABB, raycasting)
+- `src/WgpuMaui/wwwroot/WgpuMaui.js` (clickEvents, drag-to-lock pointer, release on mouseup)
+- `src/WgpuMaui/Core/Input.cs` (ClickEvent type, ClickEvents on InputState)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (ProcessPicking integration)
 
 ## Loop 6 — Undo/Redo System
 
@@ -154,9 +154,9 @@
 - UI: Undo/Redo buttons in viewport toolbar with disabled state and tooltips
 
 **Files changed:**
-- `src/WgpuSharp/Scene/UndoStack.cs` (new — IEditorAction, UndoStack, all action types)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (undo integration in all mutations)
-- `src/WgpuSharp.Demo/wwwroot/css/app.css` (toolbar button styles)
+- `src/WgpuMaui/Scene/UndoStack.cs` (new — IEditorAction, UndoStack, all action types)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (undo integration in all mutations)
+- `src/WgpuMaui.Demo/wwwroot/css/app.css` (toolbar button styles)
 
 ## Loop 7 — Play Mode (FPS Camera)
 
@@ -182,10 +182,10 @@
 - Input routing branched: play mode processes FPS camera only, editor mode processes orbit + gizmo + picking + shortcuts
 
 **Files changed:**
-- `src/WgpuSharp/Scene/FpsCamera.cs` (new — FPS camera with movement/look)
-- `src/WgpuSharp/Scene/SceneRenderer.cs` (dual render overloads, showEditorOverlays)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (play/stop, mode branching, UI)
-- `src/WgpuSharp.Demo/wwwroot/css/app.css` (play mode visuals, dimming, button colors)
+- `src/WgpuMaui/Scene/FpsCamera.cs` (new — FPS camera with movement/look)
+- `src/WgpuMaui/Scene/SceneRenderer.cs` (dual render overloads, showEditorOverlays)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (play/stop, mode branching, UI)
+- `src/WgpuMaui.Demo/wwwroot/css/app.css` (play mode visuals, dimming, button colors)
 
 ## Loop 8 — Grid Snapping
 
@@ -210,9 +210,9 @@
 - Rotation and scale are not snapped (position snap is the 80/20 for level design)
 
 **Files changed:**
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (snap state, helpers, integration in all movement paths, toolbar UI, G shortcut)
-- `src/WgpuSharp.Demo/wwwroot/css/app.css` (snap button/select styles)
-- `src/WgpuSharp/wwwroot/WgpuSharp.js` (added KeyG to preventDefault list)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (snap state, helpers, integration in all movement paths, toolbar UI, G shortcut)
+- `src/WgpuMaui.Demo/wwwroot/css/app.css` (snap button/select styles)
+- `src/WgpuMaui/wwwroot/WgpuMaui.js` (added KeyG to preventDefault list)
 
 ## Loop 9 — Point Lights as Scene Objects
 
@@ -240,11 +240,11 @@
 - Default scene includes a warm point light at (0, 3, 0)
 
 **Files changed:**
-- `src/WgpuSharp/Scene/SceneNode.cs` (PointLightData class, Light property, IsLight)
-- `src/WgpuSharp/Scene/Scene.cs` (GetLightNodes)
-- `src/WgpuSharp/Scene/SceneRenderer.cs` (light buffer, WriteLightData, new shader with multi-light)
-- `src/WgpuSharp/Scene/SceneSerializer.cs` (LightNodeData, serialize/deserialize lights)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (AddLight, light inspector UI, default light, duplicate light)
+- `src/WgpuMaui/Scene/SceneNode.cs` (PointLightData class, Light property, IsLight)
+- `src/WgpuMaui/Scene/Scene.cs` (GetLightNodes)
+- `src/WgpuMaui/Scene/SceneRenderer.cs` (light buffer, WriteLightData, new shader with multi-light)
+- `src/WgpuMaui/Scene/SceneSerializer.cs` (LightNodeData, serialize/deserialize lights)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (AddLight, light inspector UI, default light, duplicate light)
 
 ## Loop 10 — Rotate & Scale Gizmo Modes (W/E/R)
 
@@ -268,10 +268,10 @@
 - W/E/R added to JS preventDefault list
 
 **Files changed:**
-- `src/WgpuSharp/Scene/TranslateGizmo.cs` (GizmoMode enum, mode-aware drag methods, rotation/scale state)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (mode switching, ProcessGizmo multi-mode, toolbar UI)
-- `src/WgpuSharp.Demo/wwwroot/css/app.css` (tool button styles)
-- `src/WgpuSharp/wwwroot/WgpuSharp.js` (W/E/R preventDefault)
+- `src/WgpuMaui/Scene/TranslateGizmo.cs` (GizmoMode enum, mode-aware drag methods, rotation/scale state)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (mode switching, ProcessGizmo multi-mode, toolbar UI)
+- `src/WgpuMaui.Demo/wwwroot/css/app.css` (tool button styles)
+- `src/WgpuMaui/wwwroot/WgpuMaui.js` (W/E/R preventDefault)
 
 ## Loop 11 — Lit Ground Plane with Checkerboard
 
@@ -300,9 +300,9 @@
 - Edge fade makes it blend naturally into the dark background
 
 **Files changed:**
-- `src/WgpuSharp/Scene/GroundPlane.cs` (new — lit checker quad with edge fade)
-- `src/WgpuSharp/Scene/SceneRenderer.cs` (Ground property, init, render, dispose)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (Floor toggle, helpers)
+- `src/WgpuMaui/Scene/GroundPlane.cs` (new — lit checker quad with edge fade)
+- `src/WgpuMaui/Scene/SceneRenderer.cs` (Ground property, init, render, dispose)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (Floor toggle, helpers)
 
 ## Loop 12 — Multi-Select with Group Operations
 
@@ -328,9 +328,9 @@
 - Gizmo rotation/scale still operates on primary selection (translate is the key multi-select operation)
 
 **Files changed:**
-- `src/WgpuSharp/Scene/SceneRenderer.cs` (HashSet<int> selection API, multi-highlight)
-- `src/WgpuSharp/wwwroot/WgpuSharp.js` (Ctrl+A preventDefault)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (selection model, group ops, shift+click, Ctrl+A, inspector multi-view)
+- `src/WgpuMaui/Scene/SceneRenderer.cs` (HashSet<int> selection API, multi-highlight)
+- `src/WgpuMaui/wwwroot/WgpuMaui.js` (Ctrl+A preventDefault)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (selection model, group ops, shift+click, Ctrl+A, inspector multi-view)
 
 ## Loop 13 — 3D Model Import (OBJ/GLB/STL)
 
@@ -354,10 +354,10 @@
 - `pickAndReadFileBase64()` JS helper: reads any file type as `filename|base64` string
 
 **Files changed:**
-- `src/WgpuSharp/Scene/SceneNode.cs` (ImportedMeshData, ImportedMeshFileName properties)
-- `src/WgpuSharp/Scene/SceneSerializer.cs` (serialize/deserialize imported data as base64, updated resolver signature)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (ImportMesh, ResolveMeshFull, duplicate copies import data)
-- `src/WgpuSharp.Demo/wwwroot/index.html` (pickAndReadFileBase64 JS helper)
+- `src/WgpuMaui/Scene/SceneNode.cs` (ImportedMeshData, ImportedMeshFileName properties)
+- `src/WgpuMaui/Scene/SceneSerializer.cs` (serialize/deserialize imported data as base64, updated resolver signature)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (ImportMesh, ResolveMeshFull, duplicate copies import data)
+- `src/WgpuMaui.Demo/wwwroot/index.html` (pickAndReadFileBase64 JS helper)
 
 ## Loop 14 — Player Collision & Gravity
 
@@ -383,8 +383,8 @@
 - Play mode hints updated: "Space=jump"
 
 **Files changed:**
-- `src/WgpuSharp/Scene/FpsCamera.cs` (full rewrite — velocity physics, collision, gravity, jump)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (pass scene to ProcessInput, platform in default scene, updated hints)
+- `src/WgpuMaui/Scene/FpsCamera.cs` (full rewrite — velocity physics, collision, gravity, jump)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (pass scene to ProcessInput, platform in default scene, updated hints)
 
 ## Loop 15 — Procedural Sky
 
@@ -407,8 +407,8 @@
 - Clear color updated to match sky ground color for seamless fallback
 
 **Files changed:**
-- `src/WgpuSharp/Scene/Sky.cs` (new — fullscreen triangle, gradient shader, sun disc)
-- `src/WgpuSharp/Scene/SceneRenderer.cs` (Sky property, VP storage, sky rendering in pass, clear color)
+- `src/WgpuMaui/Scene/Sky.cs` (new — fullscreen triangle, gradient shader, sun disc)
+- `src/WgpuMaui/Scene/SceneRenderer.cs` (Sky property, VP storage, sky rendering in pass, clear color)
 
 ## Loop 16 — Collectible Tag & Gameplay
 
@@ -433,7 +433,7 @@
 - Default scene includes **5 colored gem spheres** arranged in a circle at radius 5, tagged Collectible
 
 **Files changed:**
-- `src/WgpuSharp/Scene/SceneNode.cs` (NodeTag enum, Tag property)
-- `src/WgpuSharp/Scene/SceneSerializer.cs` (Tag serialization/deserialization, NodeData.Tag)
-- `src/WgpuSharp.Demo/Pages/SceneEditor.razor` (Tag inspector, EnterPlayMode snapshot, ExitPlayMode restore, UpdateCollectibles, HUD, default gems)
-- `src/WgpuSharp.Demo/wwwroot/css/app.css` (HUD styles — score, win flash)
+- `src/WgpuMaui/Scene/SceneNode.cs` (NodeTag enum, Tag property)
+- `src/WgpuMaui/Scene/SceneSerializer.cs` (Tag serialization/deserialization, NodeData.Tag)
+- `src/WgpuMaui.Demo/Pages/SceneEditor.razor` (Tag inspector, EnterPlayMode snapshot, ExitPlayMode restore, UpdateCollectibles, HUD, default gems)
+- `src/WgpuMaui.Demo/wwwroot/css/app.css` (HUD styles — score, win flash)

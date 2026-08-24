@@ -1,0 +1,15 @@
+﻿@page "/not-found"
+@layout MainLayout
+
+<PageTitle>@Localizer["NotFoundPageTitle"]</PageTitle>
+<MudContainer Fixed>
+<MudCard>
+    <MudCardHeader>
+        <MudIcon Icon="@Icons.Material.Sharp.NotAccessible" Size="Size.Large"/>
+            <MudText Typo="Typo.h2">@Localizer["NotFoundCardTitle"]</MudText>
+    </MudCardHeader>
+    <MudCardContent>
+        <MudText Typo="Typo.body1">@Localizer["NotFoundCardContent"]</MudText>
+    </MudCardContent>
+</MudCard>
+</MudContainer>
