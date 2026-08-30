@@ -1,8 +1,9 @@
 <Solution>
-  <Folder Name="/src/"/>
-  <Project Path="src/WgpuMaui.Demo/WgpuMaui.Demo.csproj" />
-  <Project Path="src/WgpuMaui.Editor/WgpuMaui.Editor.csproj" />
-  <Project Path="src/WgpuMaui/WgpuMaui.csproj" />
-  <Folder Name="/tests/"/>
+  <Folder Name="/src/">
+    <Project Path="src/WgpuMaui.Demo/WgpuMaui.Demo.csproj" />
+    <Project Path="src/WgpuMaui.Editor/WgpuMaui.Editor.csproj" />
+    <Project Path="src/WgpuMaui/WgpuMaui.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
   <Project Path="tests/WgpuMaui.Tests/WgpuMaui.Tests.csproj" />
 </Solution>

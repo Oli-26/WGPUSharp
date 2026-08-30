@@ -1,6 +1,6 @@
 ﻿namespace WgpuMaui.Editor;
 
-public partial class App : Microsoft.Maui.Controls.Application
+public partial class App : Application
 {
 	public App()
 	{
@@ -9,6 +9,6 @@ public partial class App : Microsoft.Maui.Controls.Application
 
 	protected override Window CreateWindow(IActivationState? activationState)
 	{
-		return new Window(new MainPage()) { Title = "WgpuMaui.Editor" };
+		return new(new MainPage()) { Title = "WgpuMaui Editor" };
 	}
 }

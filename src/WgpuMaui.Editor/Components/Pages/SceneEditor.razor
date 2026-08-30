@@ -1,9 +1,7 @@
 @page "/editor"
 @using System.Numerics
-@using System.Text.Json
 @using WgpuMaui.Core
 @using WgpuMaui.Commands
-@using WgpuMaui.Editor.Domain.Models
 @using WgpuMaui.Mesh
 @using WgpuMaui.Pipeline
 @using WgpuMaui.Resources
@@ -86,30 +84,6 @@
                 <button class="btn btn-sm btn-outline-danger" @onclick="@(() => AddPrefab("enemypatrol"))">Enemy Patrol</button>
                 <button class="btn btn-sm btn-outline-secondary" @onclick="@(() => AddPrefab("lightpost"))">Light Post</button>
             </div>
-            <button class="btn btn-sm btn-outline-primary"
-                    @onclick="SaveSelectedAsPrefab">
-                + Save Prefab
-            </button>
-            @if (_customPrefabs.Count > 0)
-            {
-                <div class="sidebar-section-label">
-                    Custom Prefabs
-                </div>
-
-                <div class="sidebar-btn-grid">
-
-                    @foreach (var prefab in _customPrefabs)
-                    {
-                        var p = prefab;
-
-                        <button class="btn btn-sm btn-outline-primary"
-                                @onclick="() => InstantiatePrefab(p)">
-                            @p.Name
-                        </button>
-                    }
-
-                </div>
-            }
         </div>
         <div class="sidebar-actions" style="border-top: 1px solid #2a2a3a;">
             <button class="btn btn-sm btn-outline-secondary" @onclick="SaveScene">Save</button>
@@ -883,9 +857,6 @@ npx cap open android</code></pre>
     private string? _error;
     private string _gpuInfo = "";
 
-    // Folders
-    private const string PrefabFolder = "Project/Prefabs";
-
     // Package guide
     private bool _showPackageGuide;
     private int _packageTab;
@@ -917,7 +888,6 @@ npx cap open android</code></pre>
     private readonly FreeLookCamera _freeLookCamera = new();
     private bool _playMode;
     private bool _flyMode;
-    private readonly List<CustomPrefab> _customPrefabs = [];
 
     // Play-mode game state
     private int _score;
@@ -1045,9 +1015,6 @@ npx cap open android</code></pre>
                 await JS.InvokeVoidAsync("WgpuMauiEditor.initBuildListener", dotNetRef);
             }
 
-            if (!Directory.Exists(Path.Combine(Directory.GetCurrentDirectory(), PrefabFolder)))
-                Directory.CreateDirectory(Path.Combine(Directory.GetCurrentDirectory(), PrefabFolder));
-
             var adapter = await Gpu.RequestAdapterAsync(JS);
             try { _gpuInfo = (await adapter.GetInfoAsync()).ToString(); } catch { _gpuInfo = "Unknown"; }
             _device = await adapter.RequestDeviceAsync();
@@ -1113,62 +1080,62 @@ npx cap open android</code></pre>
 
                     if (_playMode)
                     {
-                        if (_flyMode)
+                    if (_flyMode)
+                    {
+                        // --- Fly mode: free camera, animations run but no player interaction ---
+                        if (!_paused) _freeLookCamera.ProcessInput(input, dt);
+                        if (input.WheelDelta != 0) _speedIndicatorTimer = 1.5f;
+                        UpdateMovingPlatforms(dt);
+                        ExecuteScripts(dt);
+                        _scene.UpdateTransforms();
+                        _scene.RefreshCaches(frame.FrameIndex);
+
+                        _batch ??= new RenderBatch(_device); _batch.Reset(); var batch = _batch;
+                        var colorView = batch.GetCurrentTextureView(canvas);
+                        _renderer!.Render(batch, _scene, _freeLookCamera, canvas, colorView, depthView, _settings);
+                        await batch.FlushAsync();
+                    }
+                    else
+                    {
+                        // --- FPS mode: physics camera + full gameplay ---
+                        if (!_paused) _fpsCamera.ProcessInput(input, dt, _scene);
+                        if (input.WheelDelta != 0) _speedIndicatorTimer = 1.5f;
+
+                        UpdateCollectibles(dt);
+                        CheckTriggers(dt);
+                        UpdateEnemies(dt);
+                        UpdateDoorsAndKeys(dt);
+                        UpdateTeleporters();
+                        UpdateDamageZones(dt);
+                        UpdateHealthPickups();
+                        UpdateMovingPlatforms(dt);
+                        CheckCheckpoints();
+                        UpdateNPCs();
+                        ExecuteScripts(dt);
+
+                        if (_timerEnabled)
                         {
-                            // --- Fly mode: free camera, animations run but no player interaction ---
-                            if (!_paused) _freeLookCamera.ProcessInput(input, dt);
-                            if (input.WheelDelta != 0) _speedIndicatorTimer = 1.5f;
-                            UpdateMovingPlatforms(dt);
-                            ExecuteScripts(dt);
-                            _scene.UpdateTransforms();
-                            _scene.RefreshCaches(frame.FrameIndex);
-
-                            _batch ??= new RenderBatch(_device); _batch.Reset(); var batch = _batch;
-                            var colorView = batch.GetCurrentTextureView(canvas);
-                            _renderer!.Render(batch, _scene, _freeLookCamera, canvas, colorView, depthView, _settings);
-                            await batch.FlushAsync();
+                            _levelTimer -= dt;
+                            if (_levelTimer <= 0) { _levelTimer = 0; _playerHealth = 0; }
                         }
-                        else
+
+                        if (_playerHealth <= 0 && _damageCooldown <= 0)
                         {
-                            // --- FPS mode: physics camera + full gameplay ---
-                            if (!_paused) _fpsCamera.ProcessInput(input, dt, _scene);
-                            if (input.WheelDelta != 0) _speedIndicatorTimer = 1.5f;
-
-                            UpdateCollectibles(dt);
-                            CheckTriggers(dt);
-                            UpdateEnemies(dt);
-                            UpdateDoorsAndKeys(dt);
-                            UpdateTeleporters();
-                            UpdateDamageZones(dt);
-                            UpdateHealthPickups();
-                            UpdateMovingPlatforms(dt);
-                            CheckCheckpoints();
-                            UpdateNPCs();
-                            ExecuteScripts(dt);
-
-                            if (_timerEnabled)
-                            {
-                                _levelTimer -= dt;
-                                if (_levelTimer <= 0) { _levelTimer = 0; _playerHealth = 0; }
-                            }
-
-                            if (_playerHealth <= 0 && _damageCooldown <= 0)
-                            {
-                                _playerHealth = 50;
-                                _fpsCamera.Position = _lastCheckpoint + new Vector3(0, FpsCamera.EyeHeight, 0);
-                                _damageCooldown = 2f;
-                            }
-
-                            _scene.UpdateTransforms();
-                            _scene.RefreshCaches(frame.FrameIndex);
-
-                            _batch ??= new RenderBatch(_device); _batch.Reset(); var batch = _batch;
-                            var colorView = batch.GetCurrentTextureView(canvas);
-                            _renderer!.Render(batch, _scene, _fpsCamera, canvas, colorView, depthView, _settings);
-                            await batch.FlushAsync();
-
-                            await DrawMinimap();
+                            _playerHealth = 50;
+                            _fpsCamera.Position = _lastCheckpoint + new Vector3(0, FpsCamera.EyeHeight, 0);
+                            _damageCooldown = 2f;
                         }
+
+                        _scene.UpdateTransforms();
+                        _scene.RefreshCaches(frame.FrameIndex);
+
+                        _batch ??= new RenderBatch(_device); _batch.Reset(); var batch = _batch;
+                        var colorView = batch.GetCurrentTextureView(canvas);
+                        _renderer!.Render(batch, _scene, _fpsCamera, canvas, colorView, depthView, _settings);
+                        await batch.FlushAsync();
+
+                        await DrawMinimap();
+                    }
                     } // end if (_playMode) gameplay+render
                 }
                 // Tick skeletal animations (both editor and play mode)
@@ -1209,108 +1176,6 @@ npx cap open android</code></pre>
             _error = ex.Message;
             StateHasChanged();
         }
-    }
- 
-    private void InstantiatePrefab(CustomPrefab prefab)
-    {
-        foreach (var nodeData in prefab.Nodes)
-        {
-            var node = CreateNodeFromPrefab(nodeData);
-
-            _scene.Add(node);
-
-            SelectSingle(node);
-        }
-    }
-    
-    private SceneNode CreateNodeFromPrefab(PrefabNodeData data)
-    {
-        var node = new SceneNode(data.Name)
-        {
-            MeshType = data.MeshType,
-            MaterialPreset = data.MaterialPreset,
-            Tag = data.Tag,
-            Color = data.Color,
-            Script = data.Script
-        };
-
-        node.Transform.Position = data.Position;
-        node.Transform.Rotation = data.Rotation;
-        node.Transform.Scale = data.Scale;
-
-        ResolveMesh(node);
-
-        foreach (var child in data.Children)
-        {
-            node.AddChild(
-                CreateNodeFromPrefab(child));
-        }
-
-        return node;
-    }
-
-    private async Task SaveSelectedAsPrefab()
-    {
-        var selected = GetSelectedNodes();
-
-        if (selected.Count == 0)
-            return;
-
-        var prefab = new Domain.Models.CustomPrefab
-        {
-            Name = selected[0].Name,
-            Nodes = selected.Select(SerializeNode).ToList()
-        };
-
-        var json = JsonSerializer.Serialize(
-            prefab,
-            new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
-
-        await File.WriteAllTextAsync(
-            Path.Combine(PrefabFolder, $"{prefab.Name}.prefab"),
-            json);
-
-        await LoadCustomPrefabs();
-    }
-   
-    private async Task LoadCustomPrefabs()
-    {
-        _customPrefabs.Clear();
-
-        foreach (var file in Directory.GetFiles(
-                     PrefabFolder,
-                     "*.prefab"))
-        {
-            var json = await File.ReadAllTextAsync(file);
-
-            var prefab =
-                JsonSerializer.Deserialize<CustomPrefab>(json);
-
-            if (prefab != null)
-                _customPrefabs.Add(prefab);
-        }
-    }
-    
-    private PrefabNodeData SerializeNode(SceneNode node)
-    {
-        return new PrefabNodeData
-        {
-            Name = node.Name,
-            MeshType = node.MeshType,
-            MaterialPreset = node.MaterialPreset,
-            Tag = node.Tag,
-            Position = node.Transform.Position,
-            Rotation = node.Transform.Rotation,
-            Scale = node.Transform.Scale,
-            Color = node.Color,
-            Script = node.Script,
-            Children = node.Children
-                .Select(SerializeNode)
-                .ToList()
-        };
     }
 
     private void AddLight()
@@ -2575,11 +2440,6 @@ npx cap open android</code></pre>
         "Light" => _lightMesh,
         _ => null,
     };
-
-    private void ResolveMesh(SceneNode node)
-    {
-        node.MeshBuffers = ResolveMesh(node.MeshType);
-    }
 
     private MeshBuffers? ResolveMeshFull(string meshType, byte[]? importedData, string? importedFileName)
     {
