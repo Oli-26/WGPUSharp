@@ -1,9 +1,27 @@
 <Solution>
-  <Folder Name="/src/">
+  <Folder Name="/WgpuMaui/" />
+  <Folder Name="/WgpuMaui/.github/" />
+  <Folder Name="/WgpuMaui/.github/skills/" />
+  <Folder Name="/WgpuMaui/.github/skills/mud-wasm/">
+    <File Path=".github/skills/mud-wasm/SKILL.md" />
+  </Folder>
+  <Folder Name="/WgpuMaui/.github/skills/scene-runtime/">
+    <File Path=".github/skills/scene-runtime/SKILL.md" />
+  </Folder>
+  <Folder Name="/WgpuMaui/.github/skills/testing-dotnet10/">
+    <File Path=".github/skills/testing-dotnet10/SKILL.md" />
+  </Folder>
+  <Folder Name="/WgpuMaui/.github/skills/wgpu-maui-engine/">
+    <File Path=".github/skills/wgpu-maui-engine/SKILL.md" />
+  </Folder>
+  <Folder Name="/WgpuMaui/src/">
     <Project Path="src/WgpuMaui.Demo/WgpuMaui.Demo.csproj" />
-    <Project Path="src/WgpuMaui.Editor/WgpuMaui.Editor.csproj" />
+    <Project Path="src/WgpuMaui.Editor/WgpuMaui.Editor.csproj">
+      <Deploy Solution="Debug|*" />
+    </Project>
     <Project Path="src/WgpuMaui/WgpuMaui.csproj" />
   </Folder>
-  <Folder Name="/tests/" />
-  <Project Path="tests/WgpuMaui.Tests/WgpuMaui.Tests.csproj" />
+  <Folder Name="/WgpuMaui/tests/">
+    <Project Path="tests/WgpuMaui.Tests/WgpuMaui.Tests.csproj" />
+  </Folder>
 </Solution>
